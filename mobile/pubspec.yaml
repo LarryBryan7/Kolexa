@@ -1,0 +1,131 @@
+# ============================================================
+# pubspec.yaml — Configuración del proyecto Flutter
+# ============================================================
+# Este archivo define:
+#   - El nombre y descripción del proyecto
+#   - Las dependencias (paquetes) que usamos
+#   - Los assets (imágenes, fuentes) disponibles en la app
+#
+# Para instalar/actualizar paquetes: flutter pub get
+# ============================================================
+
+name: kolexa
+description: Kolexa — App de comunicación escolar entre padres y centro educativo
+
+# Versión de la app: mayor.menor.parche+buildNumber
+# El buildNumber se incrementa en cada release a las tiendas
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── Localización (idioma español) ────────────────────────
+  # flutter_localizations: permite mostrar widgets en español
+  # (DatePicker, TimePickerDialog, etc.)
+  flutter_localizations:
+    sdk: flutter
+
+  # ── Navegación ───────────────────────────────────────────
+  # go_router: manejo de rutas declarativas con deep linking.
+  # Reemplaza al Navigator 1.0 de Flutter con una API más limpia.
+  go_router: ^13.0.0
+
+  # ── Estado (BLoC) ────────────────────────────────────────
+  # flutter_bloc: implementación de BLoC (Business Logic Component).
+  # BLoC separa la UI de la lógica — similar al ViewModel de Android
+  # pero más explícito con Events y States.
+  flutter_bloc: ^8.1.0
+  # equatable: compara objetos por valor en lugar de por referencia.
+  # Necesario para que BLoC detecte cambios de estado correctamente.
+  equatable: ^2.0.5
+
+  # ── HTTP / API ───────────────────────────────────────────
+  # dio: cliente HTTP avanzado con soporte para interceptores,
+  # cancelación de peticiones, timeouts y manejo de errores.
+  # Equivalente a Retrofit en Android.
+  dio: ^5.4.0
+
+  # ── Almacenamiento local ─────────────────────────────────
+  # flutter_secure_storage: Keychain (iOS) / Keystore (Android).
+  # Solo se usa para iOS. En Android es lento en dispositivos Exynos.
+  flutter_secure_storage: ^9.0.0
+
+  # shared_preferences: almacenamiento clave-valor rápido.
+  # En Android es SharedPreferences nativo (sin Keystore) — arranque instantáneo.
+  # Los tokens JWT expiran en 1h y el sandbox de Android ya protege los datos.
+  shared_preferences: ^2.2.0
+
+  # ── Imágenes ─────────────────────────────────────────────
+  # cached_network_image: descarga y cachea imágenes de internet.
+  # Muestra un placeholder mientras carga y maneja errores.
+  # Equivalente a Glide/Fresco en Android.
+  cached_network_image: ^3.3.0
+  # flutter_svg: renderiza archivos .svg exportados directamente de Figma.
+  # Se usa para el logo de marca (kolexa_logo.svg), así queda pixel-exacto
+  # en vez de reconstruir la forma a mano con widgets.
+  flutter_svg: ^2.0.10+1
+
+  # ── UI / Utilidades ──────────────────────────────────────
+  # intl: formateo de fechas, números y moneda según el locale.
+  # Ejemplo: formatear "2025-01-15" como "15 de enero de 2025"
+  intl: ^0.20.2
+
+  # ── Google Classroom integration ─────────────────────────
+  # url_launcher: abre la URL de OAuth de Google en el navegador del sistema.
+  url_launcher: ^6.2.0
+
+  # ── Cámara y galería ─────────────────────────────────────
+  # image_picker: accede a cámara y galería del dispositivo.
+  image_picker: ^1.1.2
+  # permission_handler: solicitar y verificar permisos en tiempo de ejecución.
+  permission_handler: ^11.3.1
+
+  # ── Push Notifications (Firebase) ────────────────────────
+  # firebase_core: inicialización del SDK de Firebase.
+  firebase_core: ^3.6.0
+  # firebase_messaging: recepción de notificaciones push vía FCM.
+  firebase_messaging: ^15.1.3
+  # flutter_local_notifications: muestra notificaciones en primer plano
+  # (FCM no las muestra automáticamente cuando la app está abierta).
+  flutter_local_notifications: ^17.2.3
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # flutter_lints: reglas de análisis estático para código limpio
+  flutter_lints: ^3.0.0
+  # bloc_test: utilidades para testear BLoCs
+  bloc_test: ^9.1.0
+  # mocktail: crear mocks en los tests sin generación de código
+  mocktail: ^1.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Assets: archivos estáticos disponibles en la app
+  assets:
+    - assets/images/   # logos, ilustraciones
+    - assets/icons/    # íconos personalizados
+    - assets/avatars/  # fotos de perfil de estudiantes
+
+  # Fuentes: Inter, la misma que usa el sistema de marca en Figma.
+  # Es una fuente variable (un solo archivo cubre todos los pesos);
+  # cada entrada "weight" le dice a Flutter qué eje de la variable
+  # usar para ese FontWeight.
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Variable.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Variable.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-Variable.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Variable.ttf
+          weight: 700
+

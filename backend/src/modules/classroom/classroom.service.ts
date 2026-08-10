@@ -1,0 +1,618 @@
+import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { google } from 'googleapis';
+import { PrismaService } from '../../prisma/prisma.service';
+
+const STUDENT_SCOPES = [
+  'https://www.googleapis.com/auth/classroom.courses.readonly',
+  'https://www.googleapis.com/auth/classroom.course-work.readonly',
+  'https://www.googleapis.com/auth/classroom.student-submissions.me.readonly',
+  'https://www.googleapis.com/auth/classroom.announcements.readonly',
+  'https://www.googleapis.com/auth/classroom.guardianlinks.me.readonly',
+  'email',
+  'profile',
+];
+
+const TEACHER_SCOPES = [
+  'https://www.googleapis.com/auth/classroom.courses.readonly',
+  'https://www.googleapis.com/auth/classroom.rosters.readonly',
+  'https://www.googleapis.com/auth/classroom.student-submissions.students.readonly',
+  'https://www.googleapis.com/auth/classroom.announcements.readonly',
+  'https://www.googleapis.com/auth/classroom.topics.readonly',
+  'email',
+  'profile',
+];
+
+@Injectable()
+export class ClassroomService {
+  constructor(
+    private prisma: PrismaService,
+    private config: ConfigService,
+  ) {}
+
+  private createOAuthClient() {
+    return new google.auth.OAuth2(
+      this.config.get('GOOGLE_CLIENT_ID'),
+      this.config.get('GOOGLE_CLIENT_SECRET'),
+      this.config.get('GOOGLE_CALLBACK_URL'),
+    );
+  }
+
+  // ── Genera la URL de autorización de Google ──────────────
+  getAuthUrl(id: string, type: 'student' | 'teacher' = 'student'): string {
+    const oauth2Client = this.createOAuthClient();
+    const statePayload = type === 'teacher'
+      ? { type: 'teacher', userId: id }
+      : { type: 'student', studentId: id };
+    const state = Buffer.from(JSON.stringify(statePayload)).toString('base64');
+    return oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: type === 'teacher' ? TEACHER_SCOPES : STUDENT_SCOPES,
+      prompt: 'consent',
+      state,
+    });
+  }
+
+  // ── Maneja el callback de Google e intercambia el código ──
+  async handleCallback(
+    code: string,
+    state: string,
+  ): Promise<{ type: 'student' | 'teacher'; id: string }> {
+    const parsed = JSON.parse(Buffer.from(state, 'base64').toString());
+    const type: 'student' | 'teacher' = parsed.type === 'teacher' ? 'teacher' : 'student';
+
+    const oauth2Client = this.createOAuthClient();
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client } as any) as any;
+    const { data: profile } = await oauth2.userinfo.get();
+
+    if (type === 'teacher') {
+      const userId = BigInt(parsed.userId);
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user) throw new NotFoundException('Docente no encontrado');
+
+      await this.prisma.teacherGoogleToken.upsert({
+        where: { userId },
+        create: {
+          userId,
+          accessToken: tokens.access_token!,
+          refreshToken: tokens.refresh_token!,
+          expiresAt: new Date(tokens.expiry_date!),
+          scope: tokens.scope!,
+          googleEmail: profile.email ?? null,
+        },
+        update: {
+          accessToken: tokens.access_token!,
+          refreshToken: tokens.refresh_token ?? undefined,
+          expiresAt: new Date(tokens.expiry_date!),
+          scope: tokens.scope!,
+          googleEmail: profile.email ?? null,
+        },
+      });
+      return { type: 'teacher', id: String(parsed.userId) };
+    }
+
+    // Flujo alumno (existente)
+    const studentId = BigInt(parsed.studentId);
+    const student = await this.prisma.student.findUnique({ where: { id: studentId } });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    await this.prisma.googleToken.upsert({
+      where: { studentId },
+      create: {
+        studentId,
+        accessToken: tokens.access_token!,
+        refreshToken: tokens.refresh_token!,
+        expiresAt: new Date(tokens.expiry_date!),
+        scope: tokens.scope!,
+        googleEmail: profile.email ?? null,
+      },
+      update: {
+        accessToken: tokens.access_token!,
+        refreshToken: tokens.refresh_token ?? undefined,
+        expiresAt: new Date(tokens.expiry_date!),
+        scope: tokens.scope!,
+        googleEmail: profile.email ?? null,
+      },
+    });
+    return { type: 'student', id: String(parsed.studentId) };
+  }
+
+  // ── Verifica si el docente tiene cuenta conectada ────────
+  async isTeacherConnected(userId: bigint): Promise<boolean> {
+    const token = await this.prisma.teacherGoogleToken.findUnique({ where: { userId } });
+    return !!token;
+  }
+
+  // ── Sincroniza cursos y entregas del docente ─────────────
+  async syncTeacher(userId: bigint): Promise<{ courses: number; submissions: number }> {
+    const auth = await this.getAuthClientForTeacher(userId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const classroomApi = google.classroom({ version: 'v1', auth } as any) as any;
+
+    // Obtener schoolId del docente para el auto-match de alumnos
+    const teacherRole = await this.prisma.userRole.findFirst({
+      where: { userId },
+      select: { schoolId: true },
+    });
+    const schoolId = teacherRole?.schoolId ?? null;
+
+    const { data: coursesData } = await classroomApi.courses.list({
+      teacherId: 'me',
+      courseStates: ['ACTIVE'],
+    });
+    const courses = coursesData.courses ?? [];
+    let totalSubmissions = 0;
+
+    for (const course of courses) {
+      // Fetch student count for this course
+      let studentCount = 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let fetchedStudents: any[] = [];
+      try {
+        const { data: studentsData } = await classroomApi.courses.students.list({ courseId: course.id! });
+        fetchedStudents = studentsData.students ?? [];
+        studentCount = fetchedStudents.length;
+      } catch (_) {}
+
+      const gcCourse = await this.prisma.gcTeacherCourse.upsert({
+        where: { teacherId_googleId: { teacherId: userId, googleId: course.id! } },
+        create: { teacherId: userId, googleId: course.id!, name: course.name!, section: course.section ?? null, studentCount },
+        update: { name: course.name!, section: course.section ?? null, studentCount, syncedAt: new Date() },
+      });
+
+      // Guardar roster de alumnos del curso
+      for (const s of fetchedStudents) {
+        const fullName: string = s.profile?.name?.fullName ?? '–';
+
+        // Auto-match: intentar vincular con el alumno interno por nombre
+        // Solo si todavía no tiene studentId asignado
+        const existing = await this.prisma.gcCourseStudent.findUnique({
+          where: { courseId_googleId: { courseId: gcCourse.id, googleId: s.userId } },
+          select: { studentId: true },
+        });
+
+        let studentId: bigint | null = existing?.studentId ?? null;
+        if (!studentId && schoolId) {
+          studentId = await this._matchStudentByName(fullName, schoolId);
+        }
+
+        await this.prisma.gcCourseStudent.upsert({
+          where: { courseId_googleId: { courseId: gcCourse.id, googleId: s.userId } },
+          create: {
+            courseId: gcCourse.id,
+            googleId: s.userId,
+            fullName,
+            email: s.profile?.emailAddress ?? null,
+            photoUrl: s.profile?.photoUrl ?? null,
+            studentId,
+          },
+          update: {
+            fullName,
+            email: s.profile?.emailAddress ?? null,
+            photoUrl: s.profile?.photoUrl ?? null,
+            syncedAt: new Date(),
+            // Solo actualizar studentId si aún no está vinculado
+            ...(existing?.studentId ? {} : { studentId }),
+          },
+        });
+      }
+
+      const { data: cwData } = await classroomApi.courses.courseWork.list({
+        courseId: course.id!,
+        courseWorkStates: ['PUBLISHED'],
+      });
+      const courseworks = cwData.courseWork ?? [];
+
+      for (const cw of courseworks) {
+        const { data: subsData } = await classroomApi.courses.courseWork.studentSubmissions.list({
+          courseId: course.id!,
+          courseWorkId: cw.id!,
+          states: ['TURNED_IN'],
+        });
+        const subs = subsData.studentSubmissions ?? [];
+
+        for (const sub of subs) {
+          await this.prisma.gcTeacherSubmission.upsert({
+            where: {
+              courseId_courseworkGoogleId_studentGoogleId: {
+                courseId: gcCourse.id,
+                courseworkGoogleId: cw.id!,
+                studentGoogleId: sub.userId!,
+              },
+            },
+            create: {
+              courseId: gcCourse.id,
+              courseworkGoogleId: cw.id!,
+              courseworkTitle: cw.title!,
+              studentGoogleId: sub.userId!,
+              state: sub.state ?? 'TURNED_IN',
+              submittedAt: sub.updateTime ? new Date(sub.updateTime) : null,
+            },
+            update: {
+              state: sub.state ?? 'TURNED_IN',
+              submittedAt: sub.updateTime ? new Date(sub.updateTime) : null,
+              syncedAt: new Date(),
+            },
+          });
+          totalSubmissions++;
+        }
+      }
+    }
+
+    return { courses: courses.length, submissions: totalSubmissions };
+  }
+
+  // ── Retorna cursos del docente sincronizados ─────────────
+  async getTeacherCourses(userId: bigint) {
+    return this.prisma.gcTeacherCourse.findMany({
+      where: { teacherId: userId },
+      include: { _count: { select: { submissions: true } } },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  // ── Retorna pendientes del docente (entregas sin calificar)
+  async getTeacherPending(userId: bigint) {
+    return this.prisma.gcTeacherSubmission.count({
+      where: {
+        course: { teacherId: userId },
+        state: 'TURNED_IN',
+      },
+    });
+  }
+
+  // ── Retorna el roster de alumnos desde la BD (sincronizado en sync) ─
+  async getParentTodaySummary() {
+    // Todo en hora Lima (UTC-5) para que coincida con los horarios guardados
+    const LIMA_OFFSET_MS = 5 * 60 * 60 * 1000;
+    const nowLima = new Date(Date.now() - LIMA_OFFSET_MS);
+
+    const todayStr = nowLima.toISOString().split('T')[0];
+    const todayDate = new Date(todayStr);
+
+    const session = await this.prisma.gcAttendanceSession.findFirst({
+      where: { date: todayDate },
+      orderBy: { createdAt: 'desc' },
+      include: { records: { select: { status: true } } },
+    });
+
+    const photoUrls: string[] = session && Array.isArray(session.photoUrls)
+      ? (session.photoUrls as string[])
+      : [];
+    const photoCount = photoUrls.length;
+    const arrivalStatus: string | null = session?.records[0]?.status ?? null;
+
+    let arrivalTime: string | null = null;
+    if (session) {
+      const d = new Date(session.createdAt.getTime() - LIMA_OFFSET_MS);
+      const h = d.getUTCHours();
+      const m = String(d.getUTCMinutes()).padStart(2, '0');
+      const ampm = h >= 12 ? 'pm' : 'am';
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      arrivalTime = `${h12}:${m} ${ampm}`;
+    }
+
+    const dayOfWeek = nowLima.getUTCDay();
+    const currentMinutes = nowLima.getUTCHours() * 60 + nowLima.getUTCMinutes();
+
+    let currentCourse: string | null = null;
+    const scheduleBlocks: { courseName: string; startTime: string; endTime: string; isActive: boolean; type: string }[] = [];
+
+    if (session) {
+      const blocks = await this.prisma.scheduleBlock.findMany({
+        where: { ownerId: session.teacherId, dayOfWeek },
+        include: { gcTeacherCourse: { select: { name: true } } },
+        orderBy: { startTime: 'asc' },
+      });
+
+      for (const b of blocks) {
+        const start = new Date(b.startTime as unknown as Date);
+        const end   = new Date(b.endTime   as unknown as Date);
+        const startMins = start.getUTCHours() * 60 + start.getUTCMinutes();
+        const endMins   = end.getUTCHours()   * 60 + end.getUTCMinutes();
+        const isActive = currentMinutes >= startMins && currentMinutes < endMins;
+
+        const fmt = (d: Date) => {
+          const hh = d.getUTCHours();
+          const mm = String(d.getUTCMinutes()).padStart(2, '0');
+          return `${hh}:${mm}`;
+        };
+
+        const name = b.type === 'recess' ? 'Recreo'
+          : b.type === 'break' ? 'Descanso'
+          : b.type === 'lunch' ? 'Almuerzo'
+          : (b.gcTeacherCourse?.name ?? 'Clase');
+
+        if (isActive) currentCourse = name;
+
+        scheduleBlocks.push({
+          courseName: name,
+          startTime: fmt(start),
+          endTime: fmt(end),
+          isActive,
+          type: b.type,
+        });
+      }
+    }
+
+    return { arrivalStatus, arrivalTime, currentCourse, photoCount, photoUrls, scheduleBlocks };
+  }
+
+  async getTeacherRoster(userId: bigint) {
+    const course = await this.prisma.gcTeacherCourse.findFirst({
+      where: { teacherId: userId },
+      include: { students: { orderBy: { fullName: 'asc' } } },
+      orderBy: { name: 'asc' },
+    });
+    if (!course) return [];
+
+    return course.students.map((s) => ({
+      id: Number(s.id),
+      googleId: s.googleId,
+      fullName: s.fullName,
+      email: s.email,
+      photoUrl: s.photoUrl,
+    }));
+  }
+
+  // ── Construye un cliente OAuth autenticado para el docente ─
+  // ── Auto-match por nombre ─────────────────────────────────
+  // Busca un Student interno cuyo nombre normalizado coincida con
+  // el fullName de GcCourseStudent. Devuelve null si no hay match único.
+  private async _matchStudentByName(fullName: string, schoolId: bigint): Promise<bigint | null> {
+    const normalize = (s: string) =>
+      s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+
+    const normalized = normalize(fullName);
+    const students = await this.prisma.student.findMany({
+      where: { schoolId, isActive: true, deletedAt: null },
+      select: { id: true, firstName: true, lastName: true },
+    });
+
+    const matches = students.filter((st) => {
+      const full = normalize(`${st.firstName} ${st.lastName ?? ''}`);
+      return full === normalized;
+    });
+
+    return matches.length === 1 ? matches[0].id : null;
+  }
+
+  private async getAuthClientForTeacher(userId: bigint) {
+    const tokenRecord = await this.prisma.teacherGoogleToken.findUnique({ where: { userId } });
+    if (!tokenRecord) throw new ForbiddenException('Docente sin cuenta Google conectada');
+
+    const oauth2Client = this.createOAuthClient();
+    oauth2Client.setCredentials({
+      access_token: tokenRecord.accessToken,
+      refresh_token: tokenRecord.refreshToken,
+      expiry_date: tokenRecord.expiresAt.getTime(),
+    });
+
+    oauth2Client.on('tokens', async (tokens) => {
+      if (tokens.access_token) {
+        await this.prisma.teacherGoogleToken.update({
+          where: { userId },
+          data: { accessToken: tokens.access_token, expiresAt: new Date(tokens.expiry_date!) },
+        });
+      }
+    });
+
+    return oauth2Client;
+  }
+
+  // ── Construye un cliente OAuth autenticado para el alumno ──
+  private async getAuthClientForStudent(studentId: bigint) {
+    const tokenRecord = await this.prisma.googleToken.findUnique({
+      where: { studentId },
+    });
+    if (!tokenRecord) throw new ForbiddenException('Alumno sin cuenta Google conectada');
+
+    const oauth2Client = this.createOAuthClient();
+    oauth2Client.setCredentials({
+      access_token: tokenRecord.accessToken,
+      refresh_token: tokenRecord.refreshToken,
+      expiry_date: tokenRecord.expiresAt.getTime(),
+    });
+
+    // Refresca el token automáticamente si está vencido
+    oauth2Client.on('tokens', async (tokens) => {
+      if (tokens.access_token) {
+        await this.prisma.googleToken.update({
+          where: { studentId },
+          data: {
+            accessToken: tokens.access_token,
+            expiresAt: new Date(tokens.expiry_date!),
+          },
+        });
+      }
+    });
+
+    return oauth2Client;
+  }
+
+  // ── Sincroniza cursos y tareas desde Google Classroom ────
+  async syncStudent(studentId: bigint): Promise<{ courses: number; courseworks: number }> {
+    const auth = await this.getAuthClientForStudent(studentId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const classroomApi = google.classroom({ version: 'v1', auth } as any) as any;
+
+    // 1. Traer cursos activos del alumno
+    const { data: coursesData } = await classroomApi.courses.list({
+      studentId: 'me',
+      courseStates: ['ACTIVE'],
+    });
+    const courses = coursesData.courses ?? [];
+
+    let totalCourseworks = 0;
+
+    for (const course of courses) {
+      // Upsert del curso
+      const gcCourse = await this.prisma.gcCourse.upsert({
+        where: { studentId_googleId: { studentId, googleId: course.id! } },
+        create: {
+          studentId,
+          googleId: course.id!,
+          name: course.name!,
+          section: course.section ?? null,
+          teacherName: course.teacherFolder?.title ?? null,
+        },
+        update: {
+          name: course.name!,
+          section: course.section ?? null,
+          syncedAt: new Date(),
+        },
+      });
+
+      // 2. Traer tareas del curso
+      const { data: cwData } = await classroomApi.courses.courseWork.list({
+        courseId: course.id!,
+        courseWorkStates: ['PUBLISHED'],
+      });
+      const courseworks = cwData.courseWork ?? [];
+
+      for (const cw of courseworks) {
+        const dueDate = this.parseDueDate(cw.dueDate, cw.dueTime);
+        await this.prisma.gcCoursework.upsert({
+          where: { courseId_googleId: { courseId: gcCourse.id, googleId: cw.id! } },
+          create: {
+            courseId: gcCourse.id,
+            googleId: cw.id!,
+            title: cw.title!,
+            description: cw.description ?? null,
+            dueDate,
+            maxPoints: cw.maxPoints ?? null,
+            workType: cw.workType ?? 'ASSIGNMENT',
+            state: cw.state ?? 'PUBLISHED',
+            alternateLink: cw.alternateLink ?? null,
+          },
+          update: {
+            title: cw.title!,
+            description: cw.description ?? null,
+            dueDate,
+            maxPoints: cw.maxPoints ?? null,
+            state: cw.state ?? 'PUBLISHED',
+            syncedAt: new Date(),
+          },
+        });
+        totalCourseworks++;
+      }
+
+      // 3. Traer submissions del alumno en este curso
+      const { data: subData } = await classroomApi.courses.courseWork.studentSubmissions.list({
+        courseId: course.id!,
+        courseWorkId: '-',
+        userId: 'me',
+      });
+      const submissions = subData.studentSubmissions ?? [];
+
+      for (const sub of submissions) {
+        const cw = await this.prisma.gcCoursework.findFirst({
+          where: { courseId: gcCourse.id, googleId: sub.courseWorkId! },
+          select: { id: true },
+        });
+        if (!cw) continue;
+
+        await this.prisma.gcStudentSubmission.upsert({
+          where: { courseworkId_googleId: { courseworkId: cw.id, googleId: sub.id! } },
+          create: {
+            courseworkId: cw.id,
+            googleId: sub.id!,
+            submissionState: sub.state ?? 'NEW',
+            assignedGrade: sub.assignedGrade ?? null,
+          },
+          update: {
+            submissionState: sub.state ?? 'NEW',
+            assignedGrade: sub.assignedGrade ?? null,
+            syncedAt: new Date(),
+          },
+        });
+      }
+    }
+
+    return { courses: courses.length, courseworks: totalCourseworks };
+  }
+
+  // ── Retorna los cursos sincronizados del alumno ──────────
+  async getCourses(studentId: bigint) {
+    return this.prisma.gcCourse.findMany({
+      where: { studentId },
+      include: {
+        courseworks: {
+          orderBy: { dueDate: 'asc' },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  // ── Retorna próximas tareas (todos los cursos) ───────────
+  async getUpcomingCoursework(studentId: bigint) {
+    const courses = await this.prisma.gcCourse.findMany({
+      where: { studentId },
+      select: { id: true },
+    });
+    const courseIds = courses.map((c) => c.id);
+
+    // Lunes de la semana actual en Lima (UTC-5) para incluir tareas
+    // de días anteriores de la semana que siguen pendientes.
+    const limaToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
+    const limaDate = new Date(`${limaToday}T00:00:00.000-05:00`);
+    const dayOfWeek = limaDate.getDay(); // 0=Dom, 1=Lun, ...
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const startOfThisWeek = new Date(limaDate.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
+
+    return this.prisma.gcCoursework.findMany({
+      where: {
+        courseId: { in: courseIds },
+        state: 'PUBLISHED',
+        workType: { not: 'MATERIAL' },
+        OR: [
+          { dueDate: { gte: startOfThisWeek } },
+          { dueDate: null },
+        ],
+        // Excluir si el alumno ya entregó, fue calificado, o el profesor asignó nota
+        // (Google no siempre cambia el state a RETURNED cuando el profesor califica)
+        NOT: {
+          submissions: {
+            some: {
+              OR: [
+                { submissionState: { in: ['TURNED_IN', 'RETURNED'] } },
+                { assignedGrade: { not: null } },
+              ],
+            },
+          },
+        },
+      },
+      include: { course: { select: { name: true, section: true } } },
+      orderBy: [{ dueDate: { sort: 'asc', nulls: 'last' } }],
+      take: 20,
+    });
+  }
+
+  // ── Verifica si el alumno tiene cuenta conectada ─────────
+  async isConnected(studentId: bigint): Promise<boolean> {
+    const token = await this.prisma.googleToken.findUnique({
+      where: { studentId },
+    });
+    return !!token;
+  }
+
+  private parseDueDate(
+    dueDate?: { year?: number; month?: number; day?: number } | null,
+    dueTime?: { hours?: number; minutes?: number } | null,
+  ): Date | null {
+    if (!dueDate?.year) return null;
+    // Google Classroom devuelve dueDate/dueTime en UTC — usar Date.UTC para
+    // evitar que el constructor local del servidor añada el offset de Lima.
+    return new Date(Date.UTC(
+      dueDate.year,
+      (dueDate.month ?? 1) - 1,
+      dueDate.day ?? 1,
+      dueTime?.hours ?? 23,
+      dueTime?.minutes ?? 59,
+    ));
+  }
+}
