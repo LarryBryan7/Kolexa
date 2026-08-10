@@ -248,7 +248,7 @@ export class AuthService {
     let payload: any;
     try {
       payload = this.jwtService.verify(refreshToken, {
-        secret: this.configService.get('JWT_REFRESH_SECRET'),
+        secret: this.configService.get('JWT_REFRESH_SECRET') ?? this.configService.get('JWT_SECRET'),
       });
     } catch {
       throw new UnauthorizedException('Refresh token inválido o expirado');
@@ -289,8 +289,11 @@ export class AuthService {
     });
 
     // Refresh token: vida larga (7 días), solo se usa para obtener
-    // un nuevo access token cuando el anterior expira
+    // un nuevo access token cuando el anterior expira.
+    // Se firma con JWT_REFRESH_SECRET (secreto separado del access token)
+    // para que la verificación en refresh() sea consistente.
     const refreshToken = this.jwtService.sign(payload, {
+      secret: this.configService.get('JWT_REFRESH_SECRET') ?? this.configService.get('JWT_SECRET'),
       expiresIn: this.configService.get('JWT_REFRESH_EXPIRES_IN') ?? '7d',
     });
 
