@@ -1,0 +1,72 @@
+# ============================================================
+# Kolexa — .gitignore raíz
+# ⚠️ CRÍTICO: nunca subir secretos ni datos sensibles a GitHub
+# ============================================================
+
+# ── Variables de entorno (secretos) ─────────────────────────
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# ── Credenciales de Google OAuth / Firebase / Supabase ──────
+credentials.json
+**/client_secret_*.json
+**/*firebase-adminsdk*.json
+**/service-account*.json
+**/google-services.json
+**/GoogleService-Info.plist
+**/kolexa-firebase*.json
+
+# ── Configuración local de herramientas ─────────────────────
+.claude/
+Claude desktop MCP/
+
+# ── Backups de base de datos (posibles datos reales) ────────
+database/
+
+# ── Datos privados del proyecto (NO subir a GitHub) ─────────
+pendiente hoy.rtfd/
+docs/
+plans/
+
+# ── Sistema operativo ───────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Node / Backend ──────────────────────────────────────────
+node_modules/
+dist/
+build/
+coverage/
+*.log
+backend/uploads/
+backend/dist/
+backend/node_modules/
+
+# ── Flutter / Mobile ────────────────────────────────────────
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/.pub-cache/
+mobile/.pub/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/ephemeral/
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/flutter_export_environment.sh
+mobile/macos/Flutter/ephemeral/
+mobile/windows/flutter/ephemeral/
+mobile/*.iml
+
+# ── IDE ─────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
