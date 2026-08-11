@@ -55,6 +55,24 @@ export class AuthService {
             school: true,
           },
         },
+        // Cargamos los hijos (si es padre) en la MISMA consulta para
+        // evitar un round-trip adicional a la BD (el pooler de Supabase
+        // es lento, ~900ms por consulta).
+        userStudents: {
+          include: {
+            student: {
+              select: {
+                id: true, firstName: true, lastName: true, code: true, birthday: true, avatar: true,
+                enrollments: {
+                  select: { classroom: { select: { name: true } } },
+                  orderBy: { academicYear: 'desc' },
+                  take: 1,
+                },
+              },
+            },
+          },
+          orderBy: { isPrimary: 'desc' },
+        },
       },
     });
 
@@ -79,30 +97,14 @@ export class AuthService {
     // 4. Generar los tokens JWT
     const tokens = await this.generateTokens(user);
 
-    // 5. Cargar hijos si es padre de familia
+    // 5. Cargar hijos si es padre de familia (ya vienen en la consulta principal)
     const isParent = user.userRoles.some((ur) => ur.role.name === 'parent');
     let children: {
       id: string; firstName: string; lastName: string; code: string;
       birthday: string | null; section: string | null; avatarUrl: string | null;
     }[] = [];
     if (isParent) {
-      const links = await this.prisma.userStudent.findMany({
-        where: { userId: user.id },
-        include: {
-          student: {
-            select: {
-              id: true, firstName: true, lastName: true, code: true, birthday: true, avatar: true,
-              enrollments: {
-                select: { classroom: { select: { name: true } } },
-                orderBy: { academicYear: 'desc' },
-                take: 1,
-              },
-            },
-          },
-        },
-        orderBy: { isPrimary: 'desc' },
-      });
-      children = links.map((l) => ({
+      children = user.userStudents.map((l) => ({
         id: l.student.id.toString(),
         firstName: l.student.firstName,
         lastName: l.student.lastName,
