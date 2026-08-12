@@ -483,7 +483,11 @@ export class ClassroomService {
     const cachedCourseworks = Number(row?.coursework_count ?? 0);
     const tCacheMs = Date.now() - tCacheStart;
     const diffMs = lastSyncedAt ? Date.now() - lastSyncedAt.getTime() : -1;
-    const cacheHit = !!lastSyncedAt && diffMs < 5 * 60 * 1000;
+    // TTL del caché: 15 minutos. Los datos de Classroom no cambian tan seguido
+    // como para re-sync cada 5 min. Con 15 min, si el usuario espera unos minutos
+    // entre syncs, el caché sigue activo y el sync es rápido (~2s) en vez de
+    // volver a hacer el sync completo (~26s).
+    const cacheHit = !!lastSyncedAt && diffMs < 15 * 60 * 1000;
     console.log(
       `[SYNC-DIAG] studentId=${studentId} lastCourse=${lastSyncedAt?.toISOString() ?? 'null'} ` +
         `now=${new Date().toISOString()} diffMs=${diffMs} cacheHit=${cacheHit} ` +
