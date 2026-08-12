@@ -45,17 +45,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: any): Promise<UserPayload> {
     // Verificar que el usuario sigue existiendo y está activo.
     // Un usuario podría haber sido desactivado después de obtener el token.
+    // Optimización: NO hacemos los joins de userRoles/role porque esos datos ya
+    // vienen en el payload del JWT. Esto reduce la consulta a un findFirst simple
+    // (más rápido, sobre todo con el pooler de Supabase que agrega ~1.9s por
+    // consulta con joins).
     const user = await this.prisma.user.findFirst({
       where: {
         id: BigInt(payload.sub),
         isActive: true,
         deletedAt: null, // no está eliminado
       },
-      include: {
-        // Cargamos los roles para incluirlos en el payload
-        userRoles: {
-          include: { role: true },
-        },
+      select: {
+        id: true,
+        email: true,
       },
     });
 
@@ -63,12 +65,28 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Usuario no encontrado o inactivo');
     }
 
-    // Retornamos el objeto que quedará en request.user
+    // schoolId desde el payload del JWT (rápido, sin joins).
+    // Los tokens emitidos ANTES de este cambio no traen schoolId en el payload,
+    // así que hacemos un fallback con una consulta ligera solo en ese caso.
+    let schoolId: bigint | undefined;
+    if (payload.schoolId) {
+      schoolId = BigInt(payload.schoolId);
+    } else {
+      const role = await this.prisma.userRole.findFirst({
+        where: { userId: user.id },
+        select: { schoolId: true },
+      });
+      schoolId = role?.schoolId ?? undefined;
+    }
+
+    // Retornamos el objeto que quedará en request.user.
+    // Los roles y schoolId se toman del payload del JWT (ya firmados y válidos),
+    // no de la BD, para evitar la consulta con joins en cada request.
     return {
       sub: user.id,
       email: user.email,
-      roles: user.userRoles.map((ur) => ur.role.name),
-      schoolId: user.userRoles[0]?.schoolId ?? undefined,
+      roles: payload.roles ?? [],
+      schoolId,
     };
   }
 }
