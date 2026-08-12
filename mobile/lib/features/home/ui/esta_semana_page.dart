@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
 import '../../classroom/data/models/gc_models.dart';
 import '../../classroom/data/repository/classroom_repository.dart';
@@ -55,11 +56,15 @@ IconData _workTypeIcon(String type) {
 class EstaSemanPage extends StatefulWidget {
   final String studentId;
   final String studentName;
+  // Lista ya cargada en el home. Si viene, la página abre al instante
+  // sin esperar otra llamada de red.
+  final List<GcCoursework>? initialData;
 
   const EstaSemanPage({
     super.key,
     required this.studentId,
     required this.studentName,
+    this.initialData,
   });
 
   @override
@@ -68,6 +73,7 @@ class EstaSemanPage extends StatefulWidget {
 
 class _EstaSemanPageState extends State<EstaSemanPage> {
   late Future<List<GcCoursework>> _future;
+  bool _connecting = false;
 
   @override
   void initState() {
@@ -77,7 +83,36 @@ class _EstaSemanPageState extends State<EstaSemanPage> {
 
   void _load() {
     final repo = ClassroomRepository(context.read<ApiClient>());
-    _future = repo.getUpcoming(widget.studentId);
+    // Si ya tenemos los datos del home, los usamos al instante.
+    _future = widget.initialData != null
+        ? Future.value(widget.initialData)
+        : repo.getUpcoming(widget.studentId);
+  }
+
+  // Pull-to-refresh: recarga desde la red (no usa la caché del home).
+  Future<void> _refresh() async {
+    final repo = ClassroomRepository(context.read<ApiClient>());
+    final fresh = await repo.getUpcoming(widget.studentId);
+    if (!mounted) return;
+    setState(() => _future = Future.value(fresh));
+  }
+
+  Future<void> _connectClassroom() async {
+    // Evita doble toque: deshabilita el botón mientras se procesa.
+    if (_connecting) return;
+    setState(() => _connecting = true);
+    try {
+      final url = await ClassroomRepository(context.read<ApiClient>())
+          .getAuthUrl(widget.studentId);
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo abrir el navegador: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _connecting = false);
+    }
   }
 
   String _weekRangeLabel() {
@@ -105,11 +140,14 @@ class _EstaSemanPageState extends State<EstaSemanPage> {
                     return const Center(child: CircularProgressIndicator());
                   }
                   if (snap.hasError || !snap.hasData) {
-                    return const _ErrorState();
+                    return _ErrorState(
+                      onConnect: _connectClassroom,
+                      connecting: _connecting,
+                    );
                   }
                   final week = _filterThisWeek(snap.data!);
                   if (week.isEmpty) return const _EmptyState();
-                  return _WeeklyList(items: week);
+                  return _WeeklyList(items: week, onRefresh: _refresh);
                 },
               ),
             ),
@@ -163,7 +201,8 @@ class _Header extends StatelessWidget {
 // ── Lista agrupada por día ─────────────────────────────────
 class _WeeklyList extends StatelessWidget {
   final List<GcCoursework> items;
-  const _WeeklyList({required this.items});
+  final Future<void> Function() onRefresh;
+  const _WeeklyList({required this.items, required this.onRefresh});
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +220,7 @@ class _WeeklyList extends StatelessWidget {
 
     return RefreshIndicator(
       color: _kPrimary,
-      onRefresh: () async {},
+      onRefresh: onRefresh,
       child: ListView.builder(
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
         itemCount: days.length,
@@ -373,27 +412,58 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ErrorState extends StatelessWidget {
-  const _ErrorState();
+  final VoidCallback onConnect;
+  final bool connecting;
+  const _ErrorState({required this.onConnect, required this.connecting});
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(40),
+        padding: const EdgeInsets.all(40),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _IconCircle(icon: Icons.cloud_off_outlined),
-            SizedBox(height: 16),
-            Text(
+            const _IconCircle(icon: Icons.cloud_off_outlined),
+            const SizedBox(height: 16),
+            const Text(
               'No se pudo cargar',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _kDark),
             ),
-            SizedBox(height: 6),
-            Text(
+            const SizedBox(height: 6),
+            const Text(
               'Verifica que Classroom esté conectado.',
               style: TextStyle(fontSize: 13, color: _kGrayLt),
               textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                // Misma lógica que el login: se deshabilita mientras se procesa.
+                onPressed: connecting ? null : onConnect,
+                icon: connecting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.link, size: 18, color: Colors.white),
+                label: Text(
+                  connecting ? 'Conectando...' : 'Conectar con Google',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _kPrimary,
+                  // Color del botón deshabilitado (igual que el login).
+                  disabledBackgroundColor: const Color(0xFF6F60AA),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                ),
+              ),
             ),
           ],
         ),
