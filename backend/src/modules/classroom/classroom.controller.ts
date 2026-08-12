@@ -164,4 +164,21 @@ export class ClassroomController {
   async getUpcoming(@Param('studentId') studentId: string) {
     return this.classroomService.getUpcomingCoursework(BigInt(studentId));
   }
+
+  // ── GET /classroom/student/:studentId/overview ────────────
+  // Vista combinada: connected + sync (con caché) + courses + upcoming
+  // en UNA sola respuesta. Reduce de 4 requests HTTP a 1.
+  @UseGuards(JwtAuthGuard)
+  @Get('student/:studentId/overview')
+  async getOverview(@Param('studentId') studentId: string) {
+    try {
+      return await this.classroomService.getOverview(BigInt(studentId));
+    } catch (e: any) {
+      const msg: string = e?.response?.data?.error ?? e?.message ?? '';
+      if (msg.includes('invalid_grant') || msg.includes('invalid_token')) {
+        throw new UnauthorizedException('TOKEN_EXPIRED');
+      }
+      throw e;
+    }
+  }
 }
