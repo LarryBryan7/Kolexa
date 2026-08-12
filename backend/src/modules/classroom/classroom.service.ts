@@ -669,11 +669,6 @@ export class ClassroomService {
   // Devuelve connected + sync (con caché) + courses + upcoming en UNA
   // sola respuesta. Reduce de 4 requests HTTP a 1, ahorrando el overhead
   // de red de Railway (~1.5s por request).
-  //
-  // Optimización clave: courses + upcoming se obtienen en UNA sola consulta
-  // SQL ($queryRaw con json_agg), en lugar de 2 consultas Prisma separadas.
-  // Con el pooler de Supabase (connection_limit=1) las consultas se serializan
-  // (~1.9s cada una), así que reducir de 2 a 1 ahorra ~1.9s.
   async getOverview(studentId: bigint) {
     // isConnected: 1 consulta ligera al pooler
     const token = await this.prisma.googleToken.findUnique({
@@ -685,94 +680,14 @@ export class ClassroomService {
       return { connected: false, courses: [], upcoming: [], sync: { courses: 0, courseworks: 0 } };
     }
 
-    // Lunes de la semana actual en Lima (UTC-5) para incluir tareas
-    // de días anteriores de la semana que siguen pendientes.
-    const limaToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
-    const limaDate = new Date(`${limaToday}T00:00:00.000-05:00`);
-    const dayOfWeek = limaDate.getDay(); // 0=Dom, 1=Lun, ...
-    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    const startOfThisWeek = new Date(limaDate.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
-
-    // courses + upcoming en UNA sola consulta SQL.
-    // courses: lista de cursos con conteo de courseworks.
-    // upcoming: courseworks pendientes (no entregados/calificados) de la semana.
-    type OverviewRow = {
-      courses: Array<{
-        id: bigint;
-        name: string;
-        section: string | null;
-        teacher_name: string | null;
-        coursework_count: bigint;
-      }>;
-      upcoming: Array<{
-        id: bigint;
-        course_id: bigint;
-        title: string;
-        description: string | null;
-        due_date: Date | null;
-        max_points: number | null;
-        work_type: string;
-        course_name: string;
-        course_section: string | null;
-      }>;
-    };
-    const rows = await this.prisma.$queryRaw<OverviewRow[]>`
-      WITH courses AS (
-        SELECT c.id, c.name, c.section, c.teacher_name,
-               (SELECT COUNT(*) FROM gc_coursework cw WHERE cw.course_id = c.id) AS coursework_count
-        FROM gc_courses c
-        WHERE c.student_id = ${studentId}
-        ORDER BY c.name ASC
-      ),
-      upcoming AS (
-        SELECT cw.id, cw.course_id, cw.title, cw.description, cw.due_date, cw.max_points, cw.work_type,
-               c.name AS course_name, c.section AS course_section
-        FROM gc_coursework cw
-        JOIN gc_courses c ON cw.course_id = c.id
-        WHERE c.student_id = ${studentId}
-          AND cw.state = 'PUBLISHED'
-          AND cw.work_type != 'MATERIAL'
-          AND (cw.due_date >= ${startOfThisWeek} OR cw.due_date IS NULL)
-          AND NOT EXISTS (
-            SELECT 1 FROM gc_student_submissions s
-            WHERE s.coursework_id = cw.id
-              AND (s.submission_state IN ('TURNED_IN','RETURNED') OR s.assigned_grade IS NOT NULL)
-          )
-        ORDER BY cw.due_date ASC NULLS LAST
-        LIMIT 20
-      )
-      SELECT
-        (SELECT json_agg(json_build_object(
-          'id', id, 'name', name, 'section', section, 'teacher_name', teacher_name,
-          'coursework_count', coursework_count
-        )) FROM courses) AS courses,
-        (SELECT json_agg(json_build_object(
-          'id', id, 'course_id', course_id, 'title', title, 'description', description,
-          'due_date', due_date, 'max_points', max_points, 'work_type', work_type,
-          'course_name', course_name, 'course_section', course_section
-        )) FROM upcoming) AS upcoming
-    `;
-    const row = rows[0];
-    const courses = (row?.courses ?? []).map((c) => ({
-      id: c.id.toString(),
-      name: c.name,
-      section: c.section,
-      teacherName: c.teacher_name,
-      _count: { courseworks: Number(c.coursework_count) },
-    }));
-    const upcoming = (row?.upcoming ?? []).map((cw) => ({
-      id: cw.id.toString(),
-      courseId: cw.course_id.toString(),
-      title: cw.title,
-      description: cw.description,
-      dueDate: cw.due_date,
-      maxPoints: cw.max_points,
-      workType: cw.work_type,
-      course: { name: cw.course_name, section: cw.course_section },
-    }));
-
-    // sync (con caché): 1 consulta SQL adicional al pooler.
-    const sync = await this.syncStudent(studentId);
+    // sync (con caché) + courses + upcoming en paralelo.
+    // Aunque el pooler con connection_limit=1 serializa, ahorramos el
+    // overhead de red de Railway al hacerlo en 1 solo request HTTP.
+    const [sync, courses, upcoming] = await Promise.all([
+      this.syncStudent(studentId),
+      this.getCourses(studentId),
+      this.getUpcomingCoursework(studentId),
+    ]);
 
     return { connected: true, courses, upcoming, sync };
   }
