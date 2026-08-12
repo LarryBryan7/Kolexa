@@ -263,8 +263,15 @@ export class AuthService {
     if (!stored) throw new UnauthorizedException('Sesión cerrada. Inicia sesión nuevamente');
 
     // Generar nuevo access token
+    // Se propaga el schoolId del refresh token (si existe) para que el access
+    // token renovado no necesite la consulta con joins en JwtStrategy.
     const newAccessToken = this.jwtService.sign(
-      { sub: payload.sub, email: payload.email, roles: payload.roles },
+      {
+        sub: payload.sub,
+        email: payload.email,
+        roles: payload.roles,
+        schoolId: payload.schoolId,
+      },
       { expiresIn: this.configService.get('JWT_EXPIRES_IN') ?? '7d' },
     );
 
@@ -277,12 +284,19 @@ export class AuthService {
   private async generateTokens(user: any) {
     const roles = user.userRoles.map((ur: any) => ur.role.name);
 
+    // schoolId del primer rol del usuario (mismo comportamiento que la consulta
+    // original con joins en JwtStrategy). Se incluye en el payload para que
+    // JwtStrategy.validate() NO necesite hacer joins a la BD en cada request
+    // (el pooler de Supabase agrega ~1.9s por consulta con joins).
+    const schoolId = user.userRoles[0]?.schoolId ?? null;
+
     // Payload del JWT: datos que viajan dentro del token
     // NO incluir datos sensibles (contraseña, etc.)
     const payload = {
       sub: user.id.toString(), // "subject" = identificador del usuario
       email: user.email,
       roles,
+      schoolId: schoolId ? schoolId.toString() : undefined,
     };
 
     // Access token: vida corta (1 hora), se usa en cada petición
