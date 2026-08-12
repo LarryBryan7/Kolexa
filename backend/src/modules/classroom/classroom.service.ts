@@ -466,6 +466,14 @@ export class ClassroomService {
       orderBy: { syncedAt: 'desc' },
       select: { syncedAt: true },
     });
+    // DIAGNÓSTICO TEMPORAL — ver por qué el caché no se activa en Railway
+    const _now = Date.now();
+    const _diff = lastCourse ? _now - lastCourse.syncedAt.getTime() : -1;
+    const _cacheHit = !!lastCourse && _diff < 5 * 60 * 1000;
+    console.log(
+      `[SYNC-DIAG] studentId=${studentId} lastCourse=${lastCourse ? lastCourse.syncedAt.toISOString() : 'NULL'} ` +
+        `now=${new Date(_now).toISOString()} diffMs=${_diff} cacheHit=${_cacheHit}`,
+    );
     if (lastCourse && Date.now() - lastCourse.syncedAt.getTime() < 5 * 60 * 1000) {
       const cachedCourseworks = await this.prisma.gcCoursework.count({
         where: { course: { studentId } },
