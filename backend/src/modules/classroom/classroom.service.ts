@@ -529,79 +529,98 @@ export class ClassroomService {
 
     let totalCourseworks = 0;
 
-    // 3. Procesar los resultados (solo escrituras en BD local, rápidas)
-    for (const { course, courseworks, submissions } of perCourse) {
-      // Upsert del curso
-      const gcCourse = await this.prisma.gcCourse.upsert({
-        where: { studentId_googleId: { studentId, googleId: course.id! } },
-        create: {
-          studentId,
-          googleId: course.id!,
-          name: course.name!,
-          section: course.section ?? null,
-          teacherName: course.teacherFolder?.title ?? null,
-        },
-        update: {
-          name: course.name!,
-          section: course.section ?? null,
-          syncedAt: new Date(),
-        },
-      });
-
-      // Upsert de tareas del curso
-      for (const cw of courseworks) {
-        const dueDate = this.parseDueDate(cw.dueDate, cw.dueTime);
-        await this.prisma.gcCoursework.upsert({
-          where: { courseId_googleId: { courseId: gcCourse.id, googleId: cw.id! } },
+    // 3. Procesar los resultados (escrituras en BD local).
+    // Optimización: los upserts de cursos se lanzan en paralelo con Promise.all,
+    // y dentro de cada curso los upserts de courseworks y submissions también se
+    // lanzan en paralelo. Aunque el pooler de Supabase (connection_limit=1)
+    // serialice parcialmente, la latencia de red se solapa y reduce el tiempo.
+    // Para los submissions evitamos un findFirst por cada uno: traemos todos los
+    // courseworks del curso en 1 consulta y construimos un mapa googleId→id.
+    const courseResults = await Promise.all(
+      perCourse.map(async ({ course, courseworks, submissions }) => {
+        // Upsert del curso
+        const gcCourse = await this.prisma.gcCourse.upsert({
+          where: { studentId_googleId: { studentId, googleId: course.id! } },
           create: {
-            courseId: gcCourse.id,
-            googleId: cw.id!,
-            title: cw.title!,
-            description: cw.description ?? null,
-            dueDate,
-            maxPoints: cw.maxPoints ?? null,
-            workType: cw.workType ?? 'ASSIGNMENT',
-            state: cw.state ?? 'PUBLISHED',
-            alternateLink: cw.alternateLink ?? null,
+            studentId,
+            googleId: course.id!,
+            name: course.name!,
+            section: course.section ?? null,
+            teacherName: course.teacherFolder?.title ?? null,
           },
           update: {
-            title: cw.title!,
-            description: cw.description ?? null,
-            dueDate,
-            maxPoints: cw.maxPoints ?? null,
-            state: cw.state ?? 'PUBLISHED',
+            name: course.name!,
+            section: course.section ?? null,
             syncedAt: new Date(),
           },
         });
-        totalCourseworks++;
-      }
 
-      // Upsert de submissions del alumno en este curso
-      for (const sub of submissions) {
-        const cw = await this.prisma.gcCoursework.findFirst({
-          where: { courseId: gcCourse.id, googleId: sub.courseWorkId! },
-          select: { id: true },
+        // Upsert de tareas del curso (en paralelo)
+        const cwUpserts = courseworks.map(async (cw: any) => {
+          const dueDate = this.parseDueDate(cw.dueDate, cw.dueTime);
+          await this.prisma.gcCoursework.upsert({
+            where: { courseId_googleId: { courseId: gcCourse.id, googleId: cw.id! } },
+            create: {
+              courseId: gcCourse.id,
+              googleId: cw.id!,
+              title: cw.title!,
+              description: cw.description ?? null,
+              dueDate,
+              maxPoints: cw.maxPoints ?? null,
+              workType: cw.workType ?? 'ASSIGNMENT',
+              state: cw.state ?? 'PUBLISHED',
+              alternateLink: cw.alternateLink ?? null,
+            },
+            update: {
+              title: cw.title!,
+              description: cw.description ?? null,
+              dueDate,
+              maxPoints: cw.maxPoints ?? null,
+              state: cw.state ?? 'PUBLISHED',
+              syncedAt: new Date(),
+            },
+          });
         });
-        if (!cw) continue;
+        await Promise.all(cwUpserts);
+        totalCourseworks += courseworks.length;
 
-        await this.prisma.gcStudentSubmission.upsert({
-          where: { courseworkId_googleId: { courseworkId: cw.id, googleId: sub.id! } },
-          create: {
-            courseworkId: cw.id,
-            googleId: sub.id!,
-            submissionState: sub.state ?? 'NEW',
-            assignedGrade: sub.assignedGrade ?? null,
-          },
-          update: {
-            submissionState: sub.state ?? 'NEW',
-            assignedGrade: sub.assignedGrade ?? null,
-            syncedAt: new Date(),
-          },
-        });
-      }
-    }
+        // Upsert de submissions del alumno en este curso (en paralelo)
+        if (submissions.length > 0) {
+          // Traer todos los courseworks del curso en 1 consulta → mapa googleId→id
+          const existingCws = await this.prisma.gcCoursework.findMany({
+            where: { courseId: gcCourse.id },
+            select: { id: true, googleId: true },
+          });
+          const cwIdByGoogle = new Map(
+            existingCws.map((c) => [c.googleId, c.id]),
+          );
 
-    return { courses: courses.length, courseworks: totalCourseworks };
+          const subUpserts = submissions.map(async (sub: any) => {
+            const cwId = cwIdByGoogle.get(sub.courseWorkId!);
+            if (!cwId) return;
+            await this.prisma.gcStudentSubmission.upsert({
+              where: { courseworkId_googleId: { courseworkId: cwId, googleId: sub.id! } },
+              create: {
+                courseworkId: cwId,
+                googleId: sub.id!,
+                submissionState: sub.state ?? 'NEW',
+                assignedGrade: sub.assignedGrade ?? null,
+              },
+              update: {
+                submissionState: sub.state ?? 'NEW',
+                assignedGrade: sub.assignedGrade ?? null,
+                syncedAt: new Date(),
+              },
+            });
+          });
+          await Promise.all(subUpserts);
+        }
+
+        return gcCourse;
+      }),
+    );
+
+    return { courses: courseResults.length, courseworks: totalCourseworks };
   }
 
   // ── Retorna los cursos sincronizados del alumno ──────────
