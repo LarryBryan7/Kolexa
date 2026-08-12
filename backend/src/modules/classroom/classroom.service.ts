@@ -461,24 +461,31 @@ export class ClassroomService {
   async syncStudent(studentId: bigint): Promise<{ courses: number; courseworks: number }> {
     // ── Caché: si el último sync fue hace menos de 5 minutos, no llamamos a
     // Google de nuevo. Devolvemos los datos ya sincronizados de la BD local.
-    // Optimización: las 3 consultas (findFirst + 2 counts) se lanzan en
-    // paralelo con Promise.all para reducir el tiempo de ~5.6s a ~1.9s
-    // (el pooler de Supabase agrega ~1.9s de latencia por consulta).
+    // Optimización: en lugar de 3 consultas (findFirst + 2 counts) que el pooler
+    // de Supabase serializa (~1.9s cada una = ~5.6s), hacemos UNA sola consulta
+    // SQL que devuelve last_synced_at + course_count + coursework_count en una
+    // sola ida al pooler (~1.9s total).
     const tCacheStart = Date.now();
-    const [lastCourse, cachedCourses, cachedCourseworks] = await Promise.all([
-      this.prisma.gcCourse.findFirst({
-        where: { studentId },
-        orderBy: { syncedAt: 'desc' },
-        select: { syncedAt: true },
-      }),
-      this.prisma.gcCourse.count({ where: { studentId } }),
-      this.prisma.gcCoursework.count({ where: { course: { studentId } } }),
-    ]);
+    type CacheRow = {
+      last_synced_at: Date | null;
+      course_count: bigint;
+      coursework_count: bigint;
+    };
+    const rows = await this.prisma.$queryRaw<CacheRow[]>`
+      SELECT
+        (SELECT synced_at FROM gc_courses WHERE student_id = ${studentId} ORDER BY synced_at DESC LIMIT 1) AS last_synced_at,
+        (SELECT COUNT(*) FROM gc_courses WHERE student_id = ${studentId}) AS course_count,
+        (SELECT COUNT(*) FROM gc_coursework cw JOIN gc_courses c ON cw.course_id = c.id WHERE c.student_id = ${studentId}) AS coursework_count
+    `;
+    const row = rows[0];
+    const lastSyncedAt = row?.last_synced_at ?? null;
+    const cachedCourses = Number(row?.course_count ?? 0);
+    const cachedCourseworks = Number(row?.coursework_count ?? 0);
     const tCacheMs = Date.now() - tCacheStart;
-    const diffMs = lastCourse ? Date.now() - lastCourse.syncedAt.getTime() : -1;
-    const cacheHit = !!lastCourse && diffMs < 5 * 60 * 1000;
+    const diffMs = lastSyncedAt ? Date.now() - lastSyncedAt.getTime() : -1;
+    const cacheHit = !!lastSyncedAt && diffMs < 5 * 60 * 1000;
     console.log(
-      `[SYNC-DIAG] studentId=${studentId} lastCourse=${lastCourse?.syncedAt?.toISOString() ?? 'null'} ` +
+      `[SYNC-DIAG] studentId=${studentId} lastCourse=${lastSyncedAt?.toISOString() ?? 'null'} ` +
         `now=${new Date().toISOString()} diffMs=${diffMs} cacheHit=${cacheHit} ` +
         `cacheQueriesMs=${tCacheMs} courses=${cachedCourses} courseworks=${cachedCourseworks}`,
     );
