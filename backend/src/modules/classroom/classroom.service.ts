@@ -649,26 +649,26 @@ export class ClassroomService {
   }
 
   // ── Retorna los cursos sincronizados del alumno ──────────
+  // Optimizado: usa _count en lugar de cargar todos los courseworks
+  // (la vista solo necesita el número de tareas por curso).
   async getCourses(studentId: bigint) {
     return this.prisma.gcCourse.findMany({
       where: { studentId },
-      include: {
-        courseworks: {
-          orderBy: { dueDate: 'asc' },
-        },
+      select: {
+        id: true,
+        name: true,
+        section: true,
+        teacherName: true,
+        _count: { select: { courseworks: true } },
       },
       orderBy: { name: 'asc' },
     });
   }
 
   // ── Retorna próximas tareas (todos los cursos) ───────────
+  // Optimizado: una sola consulta usando la relación course.studentId
+  // en lugar de 2 consultas (evita un round-trip extra al pooler).
   async getUpcomingCoursework(studentId: bigint) {
-    const courses = await this.prisma.gcCourse.findMany({
-      where: { studentId },
-      select: { id: true },
-    });
-    const courseIds = courses.map((c) => c.id);
-
     // Lunes de la semana actual en Lima (UTC-5) para incluir tareas
     // de días anteriores de la semana que siguen pendientes.
     const limaToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
@@ -679,7 +679,7 @@ export class ClassroomService {
 
     return this.prisma.gcCoursework.findMany({
       where: {
-        courseId: { in: courseIds },
+        course: { studentId },
         state: 'PUBLISHED',
         workType: { not: 'MATERIAL' },
         OR: [
