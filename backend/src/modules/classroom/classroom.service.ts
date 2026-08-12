@@ -461,24 +461,32 @@ export class ClassroomService {
   async syncStudent(studentId: bigint): Promise<{ courses: number; courseworks: number }> {
     // ── Caché: si el último sync fue hace menos de 5 minutos, no llamamos a
     // Google de nuevo. Devolvemos los datos ya sincronizados de la BD local.
+    const _t0 = Date.now();
     const lastCourse = await this.prisma.gcCourse.findFirst({
       where: { studentId },
       orderBy: { syncedAt: 'desc' },
       select: { syncedAt: true },
     });
+    const _t1 = Date.now();
     // DIAGNÓSTICO TEMPORAL — ver por qué el caché no se activa en Railway
     const _now = Date.now();
     const _diff = lastCourse ? _now - lastCourse.syncedAt.getTime() : -1;
     const _cacheHit = !!lastCourse && _diff < 5 * 60 * 1000;
     console.log(
       `[SYNC-DIAG] studentId=${studentId} lastCourse=${lastCourse ? lastCourse.syncedAt.toISOString() : 'NULL'} ` +
-        `now=${new Date(_now).toISOString()} diffMs=${_diff} cacheHit=${_cacheHit}`,
+        `now=${new Date(_now).toISOString()} diffMs=${_diff} cacheHit=${_cacheHit} findFirstMs=${_t1 - _t0}`,
     );
     if (lastCourse && Date.now() - lastCourse.syncedAt.getTime() < 5 * 60 * 1000) {
+      const _t2 = Date.now();
       const cachedCourseworks = await this.prisma.gcCoursework.count({
         where: { course: { studentId } },
       });
+      const _t3 = Date.now();
       const cachedCourses = await this.prisma.gcCourse.count({ where: { studentId } });
+      const _t4 = Date.now();
+      console.log(
+        `[SYNC-DIAG] CACHE-HIT studentId=${studentId} countCwMs=${_t3 - _t2} countCoursesMs=${_t4 - _t3} totalCacheMs=${_t4 - _t0}`,
+      );
       return { courses: cachedCourses, courseworks: cachedCourseworks };
     }
 
