@@ -1307,6 +1307,7 @@ model GcCoursework {
   submissions  GcStudentSubmission[]
 
   @@unique([courseId, googleId])
+  @@index([courseId, state, workType, dueDate])
   @@map("gc_coursework")
 }
 
@@ -1321,5 +1322,6 @@ model GcStudentSubmission {
   coursework GcCoursework @relation(fields: [courseworkId], references: [id], onDelete: Cascade)
 
   @@unique([courseworkId, googleId])
+  @@index([courseworkId, submissionState, assignedGrade])
   @@map("gc_student_submissions")
 }

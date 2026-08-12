@@ -435,6 +435,21 @@ export class ClassroomService {
 
   // ── Sincroniza cursos y tareas desde Google Classroom ────
   async syncStudent(studentId: bigint): Promise<{ courses: number; courseworks: number }> {
+    // ── Caché: si el último sync fue hace menos de 5 minutos, no llamamos a
+    // Google de nuevo. Devolvemos los datos ya sincronizados de la BD local.
+    const lastCourse = await this.prisma.gcCourse.findFirst({
+      where: { studentId },
+      orderBy: { syncedAt: 'desc' },
+      select: { syncedAt: true },
+    });
+    if (lastCourse && Date.now() - lastCourse.syncedAt.getTime() < 5 * 60 * 1000) {
+      const cachedCourseworks = await this.prisma.gcCoursework.count({
+        where: { course: { studentId } },
+      });
+      const cachedCourses = await this.prisma.gcCourse.count({ where: { studentId } });
+      return { courses: cachedCourses, courseworks: cachedCourseworks };
+    }
+
     const auth = await this.getAuthClientForStudent(studentId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const classroomApi = google.classroom({ version: 'v1', auth } as any) as any;
@@ -446,9 +461,33 @@ export class ClassroomService {
     });
     const courses = coursesData.courses ?? [];
 
+    // 2. Lanzar TODAS las peticiones a Google en paralelo (courseWork + submissions
+    // de cada curso) para reducir el tiempo de ~30s a ~4-6s.
+    const perCourse = await Promise.all(
+      courses.map(async (course: any) => {
+        const [cwRes, subRes] = await Promise.all([
+          classroomApi.courses.courseWork.list({
+            courseId: course.id!,
+            courseWorkStates: ['PUBLISHED'],
+          }),
+          classroomApi.courses.courseWork.studentSubmissions.list({
+            courseId: course.id!,
+            courseWorkId: '-',
+            userId: 'me',
+          }),
+        ]);
+        return {
+          course,
+          courseworks: cwRes.data.courseWork ?? [],
+          submissions: subRes.data.studentSubmissions ?? [],
+        };
+      }),
+    );
+
     let totalCourseworks = 0;
 
-    for (const course of courses) {
+    // 3. Procesar los resultados (solo escrituras en BD local, rápidas)
+    for (const { course, courseworks, submissions } of perCourse) {
       // Upsert del curso
       const gcCourse = await this.prisma.gcCourse.upsert({
         where: { studentId_googleId: { studentId, googleId: course.id! } },
@@ -466,13 +505,7 @@ export class ClassroomService {
         },
       });
 
-      // 2. Traer tareas del curso
-      const { data: cwData } = await classroomApi.courses.courseWork.list({
-        courseId: course.id!,
-        courseWorkStates: ['PUBLISHED'],
-      });
-      const courseworks = cwData.courseWork ?? [];
-
+      // Upsert de tareas del curso
       for (const cw of courseworks) {
         const dueDate = this.parseDueDate(cw.dueDate, cw.dueTime);
         await this.prisma.gcCoursework.upsert({
@@ -500,14 +533,7 @@ export class ClassroomService {
         totalCourseworks++;
       }
 
-      // 3. Traer submissions del alumno en este curso
-      const { data: subData } = await classroomApi.courses.courseWork.studentSubmissions.list({
-        courseId: course.id!,
-        courseWorkId: '-',
-        userId: 'me',
-      });
-      const submissions = subData.studentSubmissions ?? [];
-
+      // Upsert de submissions del alumno en este curso
       for (const sub of submissions) {
         const cw = await this.prisma.gcCoursework.findFirst({
           where: { courseId: gcCourse.id, googleId: sub.courseWorkId! },

@@ -24,8 +24,10 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _emailController    = TextEditingController();
-  final _passwordController = TextEditingController();
+  // Credenciales por defecto para el piloto (cuenta demo de Sofía).
+  // El usuario puede editarlas antes de iniciar sesión.
+  final _emailController    = TextEditingController(text: 'sofia.mendez@gmail.com');
+  final _passwordController = TextEditingController(text: '123456');
   final _formKey            = GlobalKey<FormState>();
   bool _obscurePassword     = true;
 
@@ -232,6 +234,8 @@ class _LoginPageState extends State<LoginPage> {
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: _kPrimary,
+                          // Color del botón cuando está deshabilitado (durante la carga)
+                          disabledBackgroundColor: const Color(0xFF6F60AA),
                           foregroundColor: Colors.white,
                           elevation: 0,
                           shape: RoundedRectangleBorder(

@@ -10,6 +10,7 @@ import '../../auth/bloc/auth_state.dart';
 import '../../notifications/ui/notification_onboarding_page.dart';
 import '../../../core/theme/app_sizes.dart';
 import '../../../core/api/api_client.dart';
+import '../../classroom/data/models/gc_models.dart';
 import '../../classroom/data/repository/classroom_repository.dart';
 import 'novedades_detail_page.dart';
 import 'esta_semana_page.dart';
@@ -66,6 +67,12 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
   int _refreshKey = 0;
   bool _wentToClassroomBrowser = false;
   bool _waitingClassroomConfirm = false;
+  bool _connectingClassroom = false;
+  // El botón manual "Ya autoricé, verificar" solo aparece si el flujo
+  // automático (didChangeAppLifecycleState) no detecta el regreso del
+  // navegador dentro del tiempo de respaldo.
+  bool _showManualVerify = false;
+  Timer? _verifyTimeout;
   Future<bool>? _classroomStatusFuture;
 
   @override
@@ -96,6 +103,7 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _verifyTimeout?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -104,7 +112,13 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _wentToClassroomBrowser) {
       setState(() => _wentToClassroomBrowser = false);
-      _onRefresh();
+      // Si venimos de conectar Google Classroom, la verificación automática
+      // (_verifyClassroomConnection) ya se encarga de sincronizar y refrescar.
+      // Evitamos llamar a _onRefresh en paralelo para que la card de conexión
+      // no reaparezca brevemente con un estado de conexión desactualizado.
+      if (!_waitingClassroomConfirm) {
+        _onRefresh();
+      }
     }
     if (state == AppLifecycleState.resumed && _waitingClassroomConfirm) {
       _verifyClassroomConnection();
@@ -127,15 +141,27 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
       final studentId = children[_selectedChild.clamp(0, children.length - 1)].studentId;
       final api = context.read<ApiClient>();
       final repo = ClassroomRepository(api);
-      try {
-        await repo.sync(studentId);
-      } catch (_) {
-        // Sync falla silenciosamente — los datos locales siguen cargando.
-      }
+      // Primero consultamos el estado de conexión (rápido) para que el
+      // botón "Conectar Google Classroom" aparezca de inmediato, sin
+      // esperar al sync (que puede tardar o fallar con 403).
+      final statusFuture = repo.isConnected(studentId);
       setState(() {
-        _refreshKey++;
-        _classroomStatusFuture = repo.isConnected(studentId);
+        _classroomStatusFuture = statusFuture;
       });
+      // El sync solo tiene sentido si el alumno ya está conectado a Google
+      // Classroom. Si no lo está, el backend devuelve 403 (llamada de red
+      // innecesaria) — lo evitamos por completo.
+      final connected = await statusFuture;
+      if (connected) {
+        try {
+          await repo.sync(studentId);
+        } catch (_) {
+          // Sync falla silenciosamente — los datos locales siguen cargando.
+        }
+      }
+      // Refrescamos la card "Esta semana" DESPUÉS del sync para que el
+      // conteo de pendientes ya incluya los datos recién traídos.
+      if (mounted) setState(() => _refreshKey++);
     } else {
       setState(() => _refreshKey++);
     }
@@ -144,6 +170,9 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
   Future<void> _connectClassroom() async {
     final studentId = _currentStudentId();
     if (studentId == null) return;
+    // Evita doble toque: deshabilita el botón mientras se procesa.
+    if (_connectingClassroom) return;
+    setState(() => _connectingClassroom = true);
     try {
       final url = await ClassroomRepository(context.read<ApiClient>()).getAuthUrl(studentId);
       final launched = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
@@ -153,37 +182,78 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
         );
         return;
       }
-      if (mounted) setState(() => _waitingClassroomConfirm = true);
+      if (mounted) {
+        setState(() {
+          _waitingClassroomConfirm = true;
+          _showManualVerify = false;
+        });
+        // Si el flujo automático (didChangeAppLifecycleState) no detecta el
+        // regreso del navegador dentro de este tiempo, mostramos el botón
+        // manual "Ya autoricé, verificar" como respaldo.
+        _verifyTimeout?.cancel();
+        _verifyTimeout = Timer(const Duration(seconds: 8), () {
+          if (mounted && _waitingClassroomConfirm) {
+            setState(() => _showManualVerify = true);
+          }
+        });
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red[700]),
         );
       }
+    } finally {
+      if (mounted) setState(() => _connectingClassroom = false);
     }
   }
 
   Future<void> _verifyClassroomConnection() async {
     final studentId = _currentStudentId();
     if (studentId == null) return;
+    // Evita doble toque: deshabilita el botón mientras se procesa.
+    if (_connectingClassroom) return;
+    // El flujo automático (o el manual) ya se disparó: cancelamos el timer de
+    // respaldo para que NO muestre el botón manual mientras verificamos.
+    _verifyTimeout?.cancel();
+    _verifyTimeout = null;
     final api = context.read<ApiClient>();
     final repo = ClassroomRepository(api);
+    // Mantenemos el estado "Verificando conexión..." mientras se sincroniza.
     if (mounted) {
       setState(() {
-        _waitingClassroomConfirm = false;
-        _classroomStatusFuture = repo.isConnected(studentId);
+        _connectingClassroom = true;
+        _waitingClassroomConfirm = true;
+        _showManualVerify = false;
       });
     }
+    // Sincronizamos ANTES de mostrar la card "Esta semana" para que el
+    // conteo de pendientes ya incluya los datos recién traídos de Google.
     try { await repo.sync(studentId); } catch (_) {}
     if (!mounted) return;
+    // El usuario acaba de autorizar y el sync terminó: asumimos conectado
+    // directamente (Future.value(true)) en lugar de volver a consultar
+    // isConnected, para que la card de conexión NO reaparezca brevemente.
     setState(() {
-      _classroomStatusFuture = repo.isConnected(studentId);
+      _connectingClassroom = false;
+      _waitingClassroomConfirm = false;
+      _showManualVerify = false;
+      _classroomStatusFuture = Future.value(true);
       _refreshKey++;
     });
   }
 
   void _selectChild(int index) {
     setState(() => _selectedChild = index);
+    // Recalcular el estado de conexión de Classroom del hijo recién
+    // seleccionado para que la card de conectar se muestre/oculte bien.
+    final authState = context.read<AuthBloc>().state;
+    final children = _buildChildren(authState);
+    if (children.isNotEmpty) {
+      final studentId = children[index.clamp(0, children.length - 1)].studentId;
+      _classroomStatusFuture =
+          ClassroomRepository(context.read<ApiClient>()).isConnected(studentId);
+    }
   }
 
   String _greeting() {
@@ -336,8 +406,48 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
                           const SizedBox(height: 12),
 
                           // ── Row: esta semana ───────────────────
-                          _EstaSemanRow(child: children[safeIndex]),
-                          const SizedBox(height: 12),
+                          // Solo se muestra si el alumno ya está
+                          // conectado a Google Classroom.
+                          FutureBuilder<bool>(
+                            future: _classroomStatusFuture,
+                            builder: (context, snap) {
+                              final connected = snap.data ?? false;
+                              if (!connected) return const SizedBox.shrink();
+                              return Column(
+                                children: [
+                                  _EstaSemanRow(
+                                    child: children[safeIndex],
+                                    refreshKey: _refreshKey,
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+                              );
+                            },
+                          ),
+
+                          // ── Card: conectar Google Classroom ─────
+                          // Solo se muestra si el alumno aún no ha
+                          // vinculado su cuenta de Google.
+                          FutureBuilder<bool>(
+                            future: _classroomStatusFuture,
+                            builder: (context, snap) {
+                              final connected = snap.data ?? true;
+                              if (connected) return const SizedBox.shrink();
+                              return Column(
+                                children: [
+                                  _ClassroomConnectCardParent(
+                                    childName: children[safeIndex].fullName,
+                                    waitingConfirm: _waitingClassroomConfirm,
+                                    connecting: _connectingClassroom,
+                                    showManualVerify: _showManualVerify,
+                                    onConnect: _connectClassroom,
+                                    onVerify: _verifyClassroomConnection,
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+                              );
+                            },
+                          ),
 
                         ],
 
@@ -1006,12 +1116,16 @@ class _NovedadesCardState extends State<_NovedadesCard>
 class _ClassroomConnectCardParent extends StatelessWidget {
   final String childName;
   final bool waitingConfirm;
+  final bool connecting;
+  final bool showManualVerify;
   final VoidCallback onConnect;
   final VoidCallback onVerify;
 
   const _ClassroomConnectCardParent({
     required this.childName,
     required this.waitingConfirm,
+    required this.connecting,
+    required this.showManualVerify,
     required this.onConnect,
     required this.onVerify,
   });
@@ -1065,60 +1179,108 @@ class _ClassroomConnectCardParent extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: onConnect,
-              icon: const Icon(Icons.link, size: 16, color: Colors.white),
-              label: Text(
-                'Conectar con Google',
-                style: TextStyle(fontSize: sizes.textValueCard, fontWeight: FontWeight.w700),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _kPrimary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
+          // ── Estado: esperando confirmación del navegador o verificando ──
+          // Mientras se espera el regreso del navegador o se sincronizan las
+          // tareas, NO mostramos botones: solo un mensaje de espera claro.
           if (waitingConfirm) ...[
-            const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const SizedBox(
-                  width: 14,
-                  height: 14,
+                  width: 16,
+                  height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2, color: _kPrimary),
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  'Verificando conexión...',
-                  style: TextStyle(fontSize: sizes.textLabelCard, color: _kTextGray),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Text(
+                    showManualVerify
+                        ? 'No pudimos verificar automáticamente'
+                        : 'Estamos cargando tus tareas, un momento por favor...',
+                    style: TextStyle(fontSize: sizes.textLabelCard, color: _kTextGray),
+                  ),
                 ),
               ],
             ),
-          ],
-          if (!waitingConfirm) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: onVerify,
-                icon: const Icon(Icons.check_circle_outline, size: 16),
-                label: Text(
-                  'Ya autoricé, verificar',
-                  style: TextStyle(fontSize: sizes.textValueCard, fontWeight: FontWeight.w600),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _kPrimary,
-                  side: const BorderSide(color: _kPrimary, width: 1.5),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            // Si el flujo automático no detecta el regreso del navegador,
+            // mostramos el botón manual como respaldo.
+            if (showManualVerify) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: connecting ? null : onVerify,
+                  icon: connecting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: _kPrimary),
+                        )
+                      : const Icon(Icons.verified_outlined,
+                          size: 16, color: _kPrimary),
+                  label: Text(
+                    connecting ? 'Verificando...' : 'Ya autoricé, verificar',
+                    style: TextStyle(
+                        fontSize: sizes.textValueCard,
+                        fontWeight: FontWeight.w700),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _kPrimary,
+                    side: BorderSide(
+                        color: connecting ? const Color(0xFF6F60AA) : _kPrimary),
+                    disabledForegroundColor: const Color(0xFF6F60AA),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
                 ),
               ),
-            ),
+            ],
+          ] else ...[
+            // ── Estado: botón "Conectar con Google" ──
+            // Mientras se prepara la conexión (esperando la URL del navegador)
+            // ocultamos el botón y mostramos un mensaje de espera.
+            if (connecting) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: _kPrimary),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Preparando la conexión...',
+                    style: TextStyle(
+                        fontSize: sizes.textLabelCard, color: _kTextGray),
+                  ),
+                ],
+              ),
+            ] else ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: onConnect,
+                  icon: const Icon(Icons.link, size: 16, color: Colors.white),
+                  label: Text(
+                    'Conectar con Google',
+                    style: TextStyle(
+                        fontSize: sizes.textValueCard,
+                        fontWeight: FontWeight.w700),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _kPrimary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),
@@ -1515,7 +1677,8 @@ class _UrgentCard extends StatelessWidget {
 // ─────────────────────────────────────────────────────────
 class _EstaSemanRow extends StatefulWidget {
   final _Child child;
-  const _EstaSemanRow({required this.child});
+  final int refreshKey;
+  const _EstaSemanRow({required this.child, required this.refreshKey});
 
   @override
   State<_EstaSemanRow> createState() => _EstaSemanRowState();
@@ -1523,20 +1686,26 @@ class _EstaSemanRow extends StatefulWidget {
 
 class _EstaSemanRowState extends State<_EstaSemanRow> {
   int? _count;
+  List<GcCoursework>? _items;
 
   @override
   void initState() {
     super.initState();
-    _loadCount();
+    _load();
   }
 
   @override
   void didUpdateWidget(_EstaSemanRow old) {
     super.didUpdateWidget(old);
-    if (old.child.studentId != widget.child.studentId) _loadCount();
+    // Recargar cuando cambia el hijo o cuando el home se refresca
+    // (p. ej. al volver de conectar Google Classroom).
+    if (old.child.studentId != widget.child.studentId ||
+        old.refreshKey != widget.refreshKey) {
+      _load();
+    }
   }
 
-  Future<void> _loadCount() async {
+  Future<void> _load() async {
     try {
       final repo = ClassroomRepository(context.read<ApiClient>());
       final all = await repo.getUpcoming(widget.child.studentId);
@@ -1550,14 +1719,17 @@ class _EstaSemanRowState extends State<_EstaSemanRow> {
         final d = DateTime(cw.dueDate!.year, cw.dueDate!.month, cw.dueDate!.day);
         return !d.isBefore(weekStart) && !d.isAfter(weekEnd);
       }).length;
-      setState(() => _count = count);
+      setState(() {
+        _count = count;
+        _items = all;
+      });
     } catch (_) {
       // No mostrar error si falla el conteo
     }
   }
 
   String get _subtitle {
-    if (_count == null) return 'Tareas de Classroom';
+    if (_count == null) return 'Cargando tus tareas...';
     if (_count == 0) return 'Todo al día esta semana';
     return '$_count pendiente${_count != 1 ? 's' : ''} esta semana';
   }
@@ -1571,6 +1743,9 @@ class _EstaSemanRowState extends State<_EstaSemanRow> {
           builder: (_) => EstaSemanPage(
             studentId: widget.child.studentId,
             studentName: widget.child.fullName,
+            // Reutilizamos la lista ya cargada en el home para que la
+            // página abra al instante, sin esperar otra llamada de red.
+            initialData: _items,
           ),
         ),
       ),
@@ -1613,7 +1788,16 @@ class _EstaSemanRowState extends State<_EstaSemanRow> {
                 ],
               ),
             ),
-            if (_count != null && _count! > 0)
+            // Mientras carga, mostramos un spinner pequeño en lugar del badge
+            // para que no parezca que "no hay pendientes".
+            if (_count == null)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: _kPrimary),
+              )
+            else if (_count! > 0)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
