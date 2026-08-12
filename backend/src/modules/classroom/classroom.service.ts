@@ -144,18 +144,54 @@ export class ClassroomService {
       courseStates: ['ACTIVE'],
     });
     const courses = coursesData.courses ?? [];
+
+    // ── Optimización: lanzar TODAS las peticiones a Google en paralelo ──
+    // Antes: por cada curso se hacían students.list + courseWork.list +
+    // studentSubmissions.list (por tarea) de forma SECUENCIAL → ~30s con
+    // varios cursos. Ahora se lanzan en paralelo con Promise.all → ~4-6s.
+    const perCourse = await Promise.all(
+      courses.map(async (course: any) => {
+        // 1. Roster de alumnos del curso (en paralelo con las tareas)
+        let fetchedStudents: any[] = [];
+        try {
+          const { data: studentsData } = await classroomApi.courses.students.list({
+            courseId: course.id!,
+          });
+          fetchedStudents = studentsData.students ?? [];
+        } catch (_) {}
+
+        // 2. Tareas publicadas del curso
+        const { data: cwData } = await classroomApi.courses.courseWork.list({
+          courseId: course.id!,
+          courseWorkStates: ['PUBLISHED'],
+        });
+        const courseworks = cwData.courseWork ?? [];
+
+        // 3. Entregas (submissions) de TODAS las tareas en paralelo
+        const submissionsByCw = await Promise.all(
+          courseworks.map(async (cw: any) => {
+            try {
+              const { data: subsData } = await classroomApi.courses.courseWork.studentSubmissions.list({
+                courseId: course.id!,
+                courseWorkId: cw.id!,
+                states: ['TURNED_IN'],
+              });
+              return { cw, subs: subsData.studentSubmissions ?? [] };
+            } catch (_) {
+              return { cw, subs: [] };
+            }
+          }),
+        );
+
+        return { course, fetchedStudents, courseworks, submissionsByCw };
+      }),
+    );
+
     let totalSubmissions = 0;
 
-    for (const course of courses) {
-      // Fetch student count for this course
-      let studentCount = 0;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let fetchedStudents: any[] = [];
-      try {
-        const { data: studentsData } = await classroomApi.courses.students.list({ courseId: course.id! });
-        fetchedStudents = studentsData.students ?? [];
-        studentCount = fetchedStudents.length;
-      } catch (_) {}
+    // ── Procesar los resultados (solo escrituras en BD local, rápidas) ──
+    for (const { course, fetchedStudents, courseworks, submissionsByCw } of perCourse) {
+      const studentCount = fetchedStudents.length;
 
       const gcCourse = await this.prisma.gcTeacherCourse.upsert({
         where: { teacherId_googleId: { teacherId: userId, googleId: course.id! } },
@@ -200,20 +236,8 @@ export class ClassroomService {
         });
       }
 
-      const { data: cwData } = await classroomApi.courses.courseWork.list({
-        courseId: course.id!,
-        courseWorkStates: ['PUBLISHED'],
-      });
-      const courseworks = cwData.courseWork ?? [];
-
-      for (const cw of courseworks) {
-        const { data: subsData } = await classroomApi.courses.courseWork.studentSubmissions.list({
-          courseId: course.id!,
-          courseWorkId: cw.id!,
-          states: ['TURNED_IN'],
-        });
-        const subs = subsData.studentSubmissions ?? [];
-
+      // Guardar entregas (submissions) de las tareas
+      for (const { cw, subs } of submissionsByCw) {
         for (const sub of subs) {
           await this.prisma.gcTeacherSubmission.upsert({
             where: {
