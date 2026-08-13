@@ -284,11 +284,13 @@ export class AuthService {
   // A1: separa la rama roles de la rama students (corren en Promise.all).
   // A2: dentro de la rama roles, paraleliza roles y schools.
   private async _loadRolesForLogin(userId: bigint) {
+    const _t0 = Date.now();
     // 1 query: user_roles (solo los IDs necesarios)
     const userRoles = await this.prisma.userRole.findMany({
       where: { userId },
       select: { roleId: true, schoolId: true },
     });
+    const _tRoles = Date.now();
 
     const roleIds = [...new Set(userRoles.map((r) => r.roleId))];
     const schoolIds = [
@@ -302,6 +304,14 @@ export class AuthService {
         ? this.prisma.school.findMany({ where: { id: { in: schoolIds } } })
         : Promise.resolve([]),
     ]);
+    const _tEnd = Date.now();
+
+    console.log(
+      `[AUTH-LOGIN-ROLES]\n` +
+        `userRolesMs=${_tRoles - _t0}\n` +
+        `rolesSchoolsMs=${_tEnd - _tRoles}\n` +
+        `totalMs=${_tEnd - _t0}`,
+    );
 
     const roleMap = new Map(roles.map((r) => [r.id, r.name]));
     const schoolMap = new Map(schools.map((s) => [s.id, s.name]));
@@ -318,22 +328,85 @@ export class AuthService {
 
   // Carga students + enrollments + classroom del usuario (A1).
   // Corre en paralelo con la rama roles.
+  // Descompuesta en queries individuales para poder medir cada operación SQL.
   private async _loadStudentsForLogin(userId: bigint) {
-    return this.prisma.userStudent.findMany({
+    const _t0 = Date.now();
+
+    // 1. user_students (ordenados por isPrimary desc, igual que el include original)
+    const userStudents = await this.prisma.userStudent.findMany({
       where: { userId },
       orderBy: { isPrimary: 'desc' },
-      include: {
-        student: {
-          select: {
-            id: true, firstName: true, lastName: true, code: true, birthday: true, avatar: true,
-            enrollments: {
-              select: { classroom: { select: { name: true } } },
-              orderBy: { academicYear: 'desc' },
-              take: 1,
-            },
-          },
-        },
+      select: { studentId: true },
+    });
+    const _t1 = Date.now();
+
+    const studentIds = userStudents.map((us) => us.studentId);
+
+    // 2. students (campos directos)
+    const students = await this.prisma.student.findMany({
+      where: { id: { in: studentIds } },
+      select: {
+        id: true, firstName: true, lastName: true, code: true, birthday: true, avatar: true,
       },
+    });
+    const _t2 = Date.now();
+
+    // 3. student_enrollments (todos, ordenados por academicYear desc para tomar el más reciente)
+    const enrollments = await this.prisma.studentEnrollment.findMany({
+      where: { studentId: { in: studentIds } },
+      orderBy: { academicYear: 'desc' },
+      select: { studentId: true, classroomId: true },
+    });
+    const _t3 = Date.now();
+
+    const classroomIds = [...new Set(enrollments.map((e) => e.classroomId))];
+
+    // 4. classrooms
+    const classrooms = classroomIds.length > 0
+      ? await this.prisma.classroom.findMany({
+          where: { id: { in: classroomIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const _t4 = Date.now();
+
+    console.log(
+      `[AUTH-LOGIN-STUDENTS]\n` +
+        `userStudentsMs=${_t1 - _t0}\n` +
+        `studentsMs=${_t2 - _t1}\n` +
+        `enrollmentsMs=${_t3 - _t2}\n` +
+        `classroomsMs=${_t4 - _t3}\n` +
+        `totalMs=${_t4 - _t0}`,
+    );
+
+    // Reconstruir la estructura equivalente al include original:
+    // userStudents[].student.{...campos, enrollments:[{classroom:{name}}]}
+    const studentMap = new Map(students.map((s) => [s.id, s]));
+    const classroomNameMap = new Map(classrooms.map((c) => [c.id, c.name]));
+    // Primer enrollment por student (el más reciente, por el orderBy desc)
+    const enrollmentByStudent = new Map<bigint, { classroomId: bigint }>();
+    for (const e of enrollments) {
+      if (!enrollmentByStudent.has(e.studentId)) {
+        enrollmentByStudent.set(e.studentId, { classroomId: e.classroomId });
+      }
+    }
+
+    return userStudents.map((us) => {
+      const student = studentMap.get(us.studentId)!;
+      const enrollment = enrollmentByStudent.get(us.studentId);
+      return {
+        student: {
+          id: student.id,
+          firstName: student.firstName,
+          lastName: student.lastName,
+          code: student.code,
+          birthday: student.birthday,
+          avatar: student.avatar,
+          enrollments: enrollment
+            ? [{ classroom: { name: classroomNameMap.get(enrollment.classroomId) ?? null } }]
+            : [],
+        },
+      };
     });
   }
 
