@@ -43,6 +43,7 @@ export class AuthService {
   async login(dto: LoginDto) {
     const _t0 = Date.now();
     // 1. Buscar el usuario por email en la BD
+    const _tFind = Date.now();
     const user = await this.prisma.user.findFirst({
       where: {
         email: dto.email,
@@ -76,6 +77,7 @@ export class AuthService {
         },
       },
     });
+    const _tBcrypt = Date.now();
 
     // Si el usuario no existe → 401 (no decimos "email no encontrado"
     // por seguridad — no queremos revelar qué emails están registrados)
@@ -89,11 +91,13 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales incorrectas');
     }
+    const _tPush = Date.now();
 
     // 3. Guardar el token de Firebase para push notifications
     if (dto.firebaseToken) {
       await this.savePushToken(user.id, dto.firebaseToken);
     }
+    const _tTokens = Date.now();
 
     // 4. Generar los tokens JWT
     const tokens = await this.generateTokens(user);
@@ -117,7 +121,15 @@ export class AuthService {
     }
 
     // 6. Devolver los tokens y la información del usuario
-    console.log(`[AUTH-LOGIN] totalMs=${Date.now() - _t0}`);
+    const _tEnd = Date.now();
+    console.log(
+      `[AUTH-LOGIN]\n` +
+        `findUserMs=${_tBcrypt - _tFind}\n` +
+        `bcryptMs=${_tPush - _tBcrypt}\n` +
+        `pushTokenMs=${_tTokens - _tPush}\n` +
+        `tokensMs=${_tEnd - _tTokens}\n` +
+        `totalMs=${_tEnd - _t0}`,
+    );
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
