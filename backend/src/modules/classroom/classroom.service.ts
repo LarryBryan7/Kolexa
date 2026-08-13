@@ -805,16 +805,67 @@ export class ClassroomService {
   // Devuelve connected + upcoming en UNA sola petición, sin courses ni
   // sync. Es más rápido que /overview porque no ejecuta syncStudent ni la
   // query de courses (que el card no necesita).
+  //
+  // La verificación de conexión y la query de upcoming se ejecutan en una
+  // sola transacción ($transaction con 2 $queryRaw) para evitar el overhead
+  // de abrir 2 conexiones al pooler de Supabase (connection_limit=1).
   async getUpcomingStatus(studentId: bigint) {
-    const token = await this.prisma.googleToken.findUnique({
-      where: { studentId },
-      select: { id: true },
-    });
-    const connected = !!token;
+    type TokenRow = { id: bigint };
+    type UpcomingRow = {
+      id: bigint;
+      course_id: bigint;
+      title: string;
+      description: string | null;
+      due_date: Date | null;
+      max_points: number | null;
+      work_type: string;
+      course_name: string;
+      course_section: string | null;
+    };
+
+    const limaToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
+    const limaDate = new Date(`${limaToday}T00:00:00.000-05:00`);
+    const dayOfWeek = limaDate.getDay(); // 0=Dom, 1=Lun, ...
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const startOfThisWeek = new Date(limaDate.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
+
+    const [tokenRows, upcomingRows] = await this.prisma.$transaction([
+      this.prisma.$queryRaw<TokenRow[]>`SELECT id FROM google_tokens WHERE student_id = ${studentId} LIMIT 1`,
+      this.prisma.$queryRaw<UpcomingRow[]>`
+        SELECT cw.id, cw.course_id, cw.title, cw.description, cw.due_date, cw.max_points, cw.work_type,
+               c.name AS course_name, c.section AS course_section
+        FROM gc_coursework cw
+        JOIN gc_courses c ON cw.course_id = c.id
+        WHERE c.student_id = ${studentId}
+          AND cw.state = 'PUBLISHED'
+          AND cw.work_type != 'MATERIAL'
+          AND (cw.due_date >= ${startOfThisWeek} OR cw.due_date IS NULL)
+          AND NOT EXISTS (
+            SELECT 1 FROM gc_student_submissions s
+            WHERE s.coursework_id = cw.id
+              AND (s.submission_state IN ('TURNED_IN','RETURNED') OR s.assigned_grade IS NOT NULL)
+          )
+        ORDER BY cw.due_date ASC NULLS LAST
+        LIMIT 20
+      `,
+    ]);
+
+    const connected = tokenRows.length > 0;
     if (!connected) {
       return { connected: false, upcoming: [] };
     }
-    const upcoming = await this.getUpcomingCoursework(studentId);
+
+    const upcoming = upcomingRows.map((cw) => ({
+      id: cw.id.toString(),
+      courseId: cw.course_id.toString(),
+      title: cw.title,
+      description: cw.description,
+      dueDate: cw.due_date,
+      maxPoints: cw.max_points,
+      workType: cw.work_type,
+      course: { name: cw.course_name, section: cw.course_section },
+    }));
+
     return { connected: true, upcoming };
   }
 
