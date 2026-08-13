@@ -52,19 +52,21 @@ class GcCourse {
   });
 
   factory GcCourse.fromJson(Map<String, dynamic> json) {
-    final cws = (json['courseworks'] as List<dynamic>? ?? [])
-        .map((c) => GcCoursework.fromJson({
-              ...c as Map<String, dynamic>,
-              'courseId': json['id'],
-              'course': {'name': json['name']},
-            }))
-        .toList();
+    // El backend ahora devuelve el conteo de tareas vía _count en lugar de
+    // la lista completa de courseworks (optimización de rendimiento).
+    final count = (json['_count'] as Map<String, dynamic>?)?['courseworks'] as int? ?? 0;
     return GcCourse(
       id: json['id'].toString(),
       name: json['name'] as String,
       section: json['section'] as String?,
       teacherName: json['teacherName'] as String?,
-      courseworks: cws,
+      courseworks: List.generate(count, (i) => GcCoursework(
+            id: '${json['id']}-$i',
+            courseId: json['id'].toString(),
+            courseName: json['name'] as String,
+            title: '',
+            workType: 'ASSIGNMENT',
+          )),
     );
   }
 }

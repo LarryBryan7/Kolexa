@@ -37,9 +37,81 @@ class ClassroomRepository {
         .toList();
   }
 
+  /// Vista combinada: connected + sync + courses + upcoming en 1 sola
+  /// petición HTTP. Reduce el número de requests a Railway (cada uno
+  /// agrega ~1.5s de overhead de red).
+  Future<ClassroomOverview> getOverview(String studentId) async {
+    final res = await _api.get('classroom/student/$studentId/overview');
+    final data = res.data as Map<String, dynamic>;
+    return ClassroomOverview.fromJson(data);
+  }
+
+  /// Vista ligera para el card "Esta semana" del home del padre:
+  /// connected + upcoming en UNA sola petición (sin courses ni sync).
+  /// Es más rápido que /overview porque no ejecuta syncStudent.
+  Future<UpcomingStatus> getUpcomingStatus(String studentId) async {
+    final res = await _api.get('classroom/student/$studentId/upcoming-status');
+    final data = res.data as Map<String, dynamic>;
+    return UpcomingStatus.fromJson(data);
+  }
+
   Future<TodaySummary> getParentTodaySummary() async {
     final res = await _api.get('classroom/parent/today-summary');
     return TodaySummary.fromJson(res.data as Map<String, dynamic>);
+  }
+}
+
+/// Resultado de la vista combinada `/overview`.
+/// Contiene connected + sync + courses + upcoming en una sola respuesta.
+class ClassroomOverview {
+  final bool connected;
+  final List<GcCourse> courses;
+  final List<GcCoursework> upcoming;
+  final int syncCourses;
+  final int syncCourseworks;
+
+  const ClassroomOverview({
+    required this.connected,
+    required this.courses,
+    required this.upcoming,
+    required this.syncCourses,
+    required this.syncCourseworks,
+  });
+
+  factory ClassroomOverview.fromJson(Map<String, dynamic> json) {
+    final sync = json['sync'] as Map<String, dynamic>? ?? {};
+    return ClassroomOverview(
+      connected: json['connected'] as bool? ?? false,
+      courses: (json['courses'] as List<dynamic>? ?? [])
+          .map((c) => GcCourse.fromJson(c as Map<String, dynamic>))
+          .toList(),
+      upcoming: (json['upcoming'] as List<dynamic>? ?? [])
+          .map((c) => GcCoursework.fromJson(c as Map<String, dynamic>))
+          .toList(),
+      syncCourses: sync['courses'] as int? ?? 0,
+      syncCourseworks: sync['courseworks'] as int? ?? 0,
+    );
+  }
+}
+
+/// Resultado de la vista ligera `/upcoming-status`.
+/// Contiene connected + upcoming (sin courses ni sync).
+class UpcomingStatus {
+  final bool connected;
+  final List<GcCoursework> upcoming;
+
+  const UpcomingStatus({
+    required this.connected,
+    required this.upcoming,
+  });
+
+  factory UpcomingStatus.fromJson(Map<String, dynamic> json) {
+    return UpcomingStatus(
+      connected: json['connected'] as bool? ?? false,
+      upcoming: (json['upcoming'] as List<dynamic>? ?? [])
+          .map((c) => GcCoursework.fromJson(c as Map<String, dynamic>))
+          .toList(),
+    );
   }
 }
 
