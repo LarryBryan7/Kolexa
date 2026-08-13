@@ -181,4 +181,13 @@ export class ClassroomController {
       throw e;
     }
   }
+
+  // ── GET /classroom/student/:studentId/upcoming-status ─────
+  // Vista ligera para el card "Esta semana" del home del padre:
+  // connected + upcoming en UNA sola petición (sin courses ni sync).
+  @UseGuards(JwtAuthGuard)
+  @Get('student/:studentId/upcoming-status')
+  async getUpcomingStatus(@Param('studentId') studentId: string) {
+    return this.classroomService.getUpcomingStatus(BigInt(studentId));
+  }
 }

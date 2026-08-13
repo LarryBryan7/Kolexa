@@ -89,42 +89,15 @@ class ClassroomBloc extends Bloc<ClassroomEvent, ClassroomState> {
   Future<void> _onLoad(LoadClassroom event, Emitter<ClassroomState> emit) async {
     emit(ClassroomLoading());
     try {
-      final connected = await _repo.isConnected(event.studentId);
-      if (!connected) {
+      // Una sola petición HTTP combinada (connected + sync + courses + upcoming).
+      // Reduce de 4 requests a 1, ahorrando el overhead de red de Railway
+      // (~1.5s por request) y las consultas al pooler.
+      final overview = await _repo.getOverview(event.studentId);
+      if (!overview.connected) {
         emit(ClassroomNotConnected());
         return;
       }
-      // Muestra datos cacheados primero (respuesta inmediata).
-      // getCourses + getUpcoming se lanzan EN PARALELO (Future.wait) para
-      // reducir el tiempo: con el pooler de Supabase (~1.9s por consulta),
-      // secuencial serían ~4s, en paralelo ~2s.
-      final results = await Future.wait([
-        _repo.getCourses(event.studentId),
-        _repo.getUpcoming(event.studentId),
-      ]);
-      final courses = results[0] as List<GcCourse>;
-      final upcoming = results[1] as List<GcCoursework>;
-      emit(ClassroomLoaded(courses: courses, upcoming: upcoming));
-
-      // Luego sincroniza en segundo plano y refresca.
-      emit(ClassroomSyncing(courses: courses, upcoming: upcoming));
-      final syncResult = await _repo.sync(event.studentId);
-      // Si el sync no cambió los conteos (caché activo), NO recargamos
-      // courses/upcoming (evita 2 consultas redundantes al pooler).
-      if (syncResult['courses'] == courses.length &&
-          syncResult['courseworks'] == upcoming.length) {
-        emit(ClassroomLoaded(courses: courses, upcoming: upcoming));
-        return;
-      }
-      // Si cambió, recargamos en paralelo.
-      final freshResults = await Future.wait([
-        _repo.getCourses(event.studentId),
-        _repo.getUpcoming(event.studentId),
-      ]);
-      emit(ClassroomLoaded(
-        courses: freshResults[0] as List<GcCourse>,
-        upcoming: freshResults[1] as List<GcCoursework>,
-      ));
+      emit(ClassroomLoaded(courses: overview.courses, upcoming: overview.upcoming));
     } catch (e) {
       emit(ClassroomError(e.toString()));
     }
@@ -143,17 +116,13 @@ class ClassroomBloc extends Bloc<ClassroomEvent, ClassroomState> {
       ClassroomConnectedCallback event, Emitter<ClassroomState> emit) async {
     emit(ClassroomLoading());
     try {
-      // Sincronizar inmediatamente tras conectar
-      await _repo.sync(event.studentId);
-      // Cargar courses + upcoming EN PARALELO
-      final results = await Future.wait([
-        _repo.getCourses(event.studentId),
-        _repo.getUpcoming(event.studentId),
-      ]);
-      emit(ClassroomLoaded(
-        courses: results[0] as List<GcCourse>,
-        upcoming: results[1] as List<GcCoursework>,
-      ));
+      // Una sola petición combinada (sync + courses + upcoming).
+      final overview = await _repo.getOverview(event.studentId);
+      if (!overview.connected) {
+        emit(ClassroomNotConnected());
+        return;
+      }
+      emit(ClassroomLoaded(courses: overview.courses, upcoming: overview.upcoming));
     } catch (e) {
       emit(ClassroomError(e.toString()));
     }
@@ -169,22 +138,13 @@ class ClassroomBloc extends Bloc<ClassroomEvent, ClassroomState> {
     }
     emit(ClassroomSyncing(courses: courses, upcoming: upcoming));
     try {
-      final syncResult = await _repo.sync(event.studentId);
-      // Si el sync no cambió los conteos (caché activo), NO recargamos.
-      if (syncResult['courses'] == courses.length &&
-          syncResult['courseworks'] == upcoming.length) {
-        emit(ClassroomLoaded(courses: courses, upcoming: upcoming));
+      // Una sola petición combinada (sync + courses + upcoming).
+      final overview = await _repo.getOverview(event.studentId);
+      if (!overview.connected) {
+        emit(ClassroomNotConnected());
         return;
       }
-      // Si cambió, recargamos en paralelo.
-      final results = await Future.wait([
-        _repo.getCourses(event.studentId),
-        _repo.getUpcoming(event.studentId),
-      ]);
-      emit(ClassroomLoaded(
-        courses: results[0] as List<GcCourse>,
-        upcoming: results[1] as List<GcCoursework>,
-      ));
+      emit(ClassroomLoaded(courses: overview.courses, upcoming: overview.upcoming));
     } catch (e) {
       emit(ClassroomError(e.toString()));
     }
