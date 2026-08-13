@@ -80,9 +80,14 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
   // (connection_limit=1) y se serialicen (~1.9s por query).
   ParentHomeData? _parentHome;
 
+  // Marca de tiempo del montaje del Home para medir cuánto tarda en
+  // cargarse el primer /parent/home (instrumentación [FLOW]).
+  late final int _homeStartMs;
+
   @override
   void initState() {
     super.initState();
+    _homeStartMs = DateTime.now().millisecondsSinceEpoch;
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _onRefresh();
@@ -199,6 +204,8 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
         _parentHome = data;
         _refreshKey++;
       });
+      print('[FLOW] home-to-first-data = '
+          '${DateTime.now().millisecondsSinceEpoch - _homeStartMs} ms');
     } catch (_) {
       // Error de red: mantener los datos anteriores sin romper la UI.
     }
