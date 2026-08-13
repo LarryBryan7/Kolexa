@@ -917,6 +917,7 @@ export class ClassroomService {
     // La query de schedule_blocks depende del teacher_id de la sesión, así
     // que primero obtenemos la sesión (1 conexión) y luego el resto en una
     // transacción (1 conexión). Total 2 conexiones en vez de 4.
+    const _t0 = Date.now();
     const sessionRows = await this.prisma.$queryRaw<SessionRow[]>`
       SELECT s.id, s.teacher_id, s.created_at, s.photo_urls,
              (SELECT r.status FROM gc_attendance_records r WHERE r.session_id = s.id ORDER BY r.id LIMIT 1) AS status
@@ -926,6 +927,7 @@ export class ClassroomService {
       LIMIT 1
     `;
 
+    const _tSession = Date.now();
     const [blockRows, tokenRows, upcomingRows] = await this.prisma.$transaction([
       this.prisma.$queryRaw<BlockRow[]>`
         SELECT b.start_time, b.end_time, b.type, c.name AS course_name
@@ -1017,13 +1019,19 @@ export class ClassroomService {
         }))
       : [];
 
+    console.log(
+      `[PARENT-HOME] studentId=${studentId} sessionMs=${_tSession - _t0} ` +
+        `txMs=${Date.now() - _tSession} totalMs=${Date.now() - _t0}`,
+    );
     return { todaySummary, upcomingStatus: { connected, upcoming } };
   }
 
   async isConnected(studentId: bigint): Promise<boolean> {
+    const _t0 = Date.now();
     const token = await this.prisma.googleToken.findUnique({
       where: { studentId },
     });
+    console.log(`[IS-CONNECTED] studentId=${studentId} totalMs=${Date.now() - _t0}`);
     return !!token;
   }
 

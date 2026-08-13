@@ -41,6 +41,7 @@ export class AuthService {
   // ── LOGIN ──────────────────────────────────────────────
   // Verifica credenciales y devuelve accessToken + refreshToken
   async login(dto: LoginDto) {
+    const _t0 = Date.now();
     // 1. Buscar el usuario por email en la BD
     const user = await this.prisma.user.findFirst({
       where: {
@@ -116,6 +117,7 @@ export class AuthService {
     }
 
     // 6. Devolver los tokens y la información del usuario
+    console.log(`[AUTH-LOGIN] totalMs=${Date.now() - _t0}`);
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,

@@ -74,6 +74,35 @@ class ApiClient {
 
     _dio.interceptors.add(AuthInterceptor());
 
+    // Interceptor de timing: mide la duración de TODOS los requests HTTP.
+    // Solo en debug/profile — nunca en producción.
+    if (!kReleaseMode) {
+      _dio.interceptors.add(InterceptorsWrapper(
+        onRequest: (options, handler) {
+          options.extra['t0'] = DateTime.now().millisecondsSinceEpoch;
+          handler.next(options);
+        },
+        onResponse: (response, handler) {
+          final t0 = response.requestOptions.extra['t0'] as int?;
+          if (t0 != null) {
+            final ms = DateTime.now().millisecondsSinceEpoch - t0;
+            print('[HTTP-TIMING] ${response.requestOptions.method} '
+                '${response.requestOptions.path} = $ms ms');
+          }
+          handler.next(response);
+        },
+        onError: (e, handler) {
+          final t0 = e.requestOptions.extra['t0'] as int?;
+          if (t0 != null) {
+            final ms = DateTime.now().millisecondsSinceEpoch - t0;
+            print('[HTTP-TIMING] ${e.requestOptions.method} '
+                '${e.requestOptions.path} = $ms ms (error)');
+          }
+          handler.next(e);
+        },
+      ));
+    }
+
     // LogInterceptor solo en debug/profile — nunca en producción
     if (!kReleaseMode) {
       _dio.interceptors.add(LogInterceptor(
