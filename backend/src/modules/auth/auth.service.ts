@@ -328,56 +328,51 @@ export class AuthService {
 
   // Carga students + enrollments + classroom del usuario (A1).
   // Corre en paralelo con la rama roles.
-  // Descompuesta en queries individuales para poder medir cada operación SQL.
+  // Alternativa C: se paralelizan las queries que son independientes entre sí
+  // (aprovechan connection_limit=5):
+  //   - Fase 1: user_students (depende solo de userId).
+  //   - Fase 2: students y enrollments en paralelo (ambas dependen de studentIds).
+  //   - Fase 3: classrooms (depende de los classroomIds de enrollments).
+  // El resultado reconstruido es idéntico al include original.
   private async _loadStudentsForLogin(userId: bigint) {
     const _t0 = Date.now();
 
-    // 1. user_students (ordenados por isPrimary desc, igual que el include original)
+    // Fase 1: user_students (ordenados por isPrimary desc, igual que el include original)
     const userStudents = await this.prisma.userStudent.findMany({
       where: { userId },
       orderBy: { isPrimary: 'desc' },
       select: { studentId: true },
     });
-    const _t1 = Date.now();
 
     const studentIds = userStudents.map((us) => us.studentId);
 
-    // 2. students (campos directos)
-    const students = await this.prisma.student.findMany({
-      where: { id: { in: studentIds } },
-      select: {
-        id: true, firstName: true, lastName: true, code: true, birthday: true, avatar: true,
-      },
-    });
-    const _t2 = Date.now();
+    // Fase 2 (paralela): students (campos directos) y student_enrollments (todos,
+    // ordenados por academicYear desc para tomar el más reciente).
+    const [students, enrollments] = await Promise.all([
+      this.prisma.student.findMany({
+        where: { id: { in: studentIds } },
+        select: {
+          id: true, firstName: true, lastName: true, code: true, birthday: true, avatar: true,
+        },
+      }),
+      this.prisma.studentEnrollment.findMany({
+        where: { studentId: { in: studentIds } },
+        orderBy: { academicYear: 'desc' },
+        select: { studentId: true, classroomId: true },
+      }),
+    ]);
 
-    // 3. student_enrollments (todos, ordenados por academicYear desc para tomar el más reciente)
-    const enrollments = await this.prisma.studentEnrollment.findMany({
-      where: { studentId: { in: studentIds } },
-      orderBy: { academicYear: 'desc' },
-      select: { studentId: true, classroomId: true },
-    });
-    const _t3 = Date.now();
-
+    // Fase 3: classrooms (depende de los classroomIds de enrollments).
     const classroomIds = [...new Set(enrollments.map((e) => e.classroomId))];
-
-    // 4. classrooms
     const classrooms = classroomIds.length > 0
       ? await this.prisma.classroom.findMany({
           where: { id: { in: classroomIds } },
           select: { id: true, name: true },
         })
       : [];
-    const _t4 = Date.now();
 
-    console.log(
-      `[AUTH-LOGIN-STUDENTS]\n` +
-        `userStudentsMs=${_t1 - _t0}\n` +
-        `studentsMs=${_t2 - _t1}\n` +
-        `enrollmentsMs=${_t3 - _t2}\n` +
-        `classroomsMs=${_t4 - _t3}\n` +
-        `totalMs=${_t4 - _t0}`,
-    );
+    const _tEnd = Date.now();
+    console.log(`[AUTH-LOGIN-STUDENTS] totalMs=${_tEnd - _t0}`);
 
     // Reconstruir la estructura equivalente al include original:
     // userStudents[].student.{...campos, enrollments:[{classroom:{name}}]}
