@@ -42,56 +42,38 @@ export class AuthService {
   // Verifica credenciales y devuelve accessToken + refreshToken
   async login(dto: LoginDto) {
     const _t0 = Date.now();
-    // 1. Buscar el usuario por email en la BD
+    // 1. Buscar el usuario por email en la BD (solo campos directos, sin joins)
     const _tFind = Date.now();
-    const user = await this.prisma.user.findFirst({
-      where: {
-        email: dto.email,
-        isActive: true,
-        deletedAt: null,
-      },
-      include: {
-        userRoles: {
-          include: {
-            role: true,
-            school: true,
-          },
-        },
-        // Cargamos los hijos (si es padre) en la MISMA consulta para
-        // evitar un round-trip adicional a la BD (el pooler de Supabase
-        // es lento, ~900ms por consulta).
-        userStudents: {
-          include: {
-            student: {
-              select: {
-                id: true, firstName: true, lastName: true, code: true, birthday: true, avatar: true,
-                enrollments: {
-                  select: { classroom: { select: { name: true } } },
-                  orderBy: { academicYear: 'desc' },
-                  take: 1,
-                },
-              },
-            },
-          },
-          orderBy: { isPrimary: 'desc' },
-        },
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+      select: {
+        id: true, email: true, passwordHash: true, firstName: true, lastName: true,
+        avatar: true, needsPasswordChange: true, isActive: true, deletedAt: true,
       },
     });
     const _tBcrypt = Date.now();
 
-    // Si el usuario no existe → 401 (no decimos "email no encontrado"
-    // por seguridad — no queremos revelar qué emails están registrados)
-    if (!user) {
+    // Si el usuario no existe, está inactivo o eliminado → 401
+    // (no decimos "email no encontrado" por seguridad — no queremos
+    // revelar qué emails están registrados)
+    if (!user || !user.isActive || user.deletedAt) {
       throw new UnauthorizedException('Credenciales incorrectas');
     }
 
-    // 2. Verificar la contraseña contra el hash guardado en BD
-    // bcrypt.compare compara el texto plano con el hash de forma segura
-    const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
+    // 2. Verificar la contraseña + cargar roles/school y students/enrollments
+    //    EN PARALELO (A1 + A2). bcrypt es CPU local; las dos ramas de BD son
+    //    independientes entre sí y aprovechan connection_limit=5.
+    const _tParallel = Date.now();
+    const [isPasswordValid, rolesData, studentsData] = await Promise.all([
+      bcrypt.compare(dto.password, user.passwordHash),
+      this._loadRolesForLogin(user.id),
+      this._loadStudentsForLogin(user.id),
+    ]);
+    const _tPush = Date.now();
+
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales incorrectas');
     }
-    const _tPush = Date.now();
 
     // 3. Guardar el token de Firebase para push notifications
     if (dto.firebaseToken) {
@@ -100,16 +82,18 @@ export class AuthService {
     const _tTokens = Date.now();
 
     // 4. Generar los tokens JWT
-    const tokens = await this.generateTokens(user);
+    const roles = rolesData.map((r) => r.roleName).filter((n): n is string => n !== null);
+    const schoolId = rolesData[0]?.schoolId ?? null;
+    const tokens = await this.generateTokens(user, roles, schoolId);
 
-    // 5. Cargar hijos si es padre de familia (ya vienen en la consulta principal)
-    const isParent = user.userRoles.some((ur) => ur.role.name === 'parent');
+    // 5. Cargar hijos si es padre de familia
+    const isParent = rolesData.some((r) => r.roleName === 'parent');
     let children: {
       id: string; firstName: string; lastName: string; code: string;
       birthday: string | null; section: string | null; avatarUrl: string | null;
     }[] = [];
     if (isParent) {
-      children = user.userStudents.map((l) => ({
+      children = studentsData.map((l) => ({
         id: l.student.id.toString(),
         firstName: l.student.firstName,
         lastName: l.student.lastName,
@@ -125,7 +109,7 @@ export class AuthService {
     console.log(
       `[AUTH-LOGIN]\n` +
         `findUserMs=${_tBcrypt - _tFind}\n` +
-        `bcryptMs=${_tPush - _tBcrypt}\n` +
+        `parallelMs=${_tPush - _tParallel}\n` +
         `pushTokenMs=${_tTokens - _tPush}\n` +
         `tokensMs=${_tEnd - _tTokens}\n` +
         `totalMs=${_tEnd - _t0}`,
@@ -140,10 +124,10 @@ export class AuthService {
         firstName: user.firstName,
         lastName: user.lastName,
         avatar: user.avatar,
-        roles: user.userRoles.map((ur) => ({
-          role: ur.role.name,
+        roles: rolesData.map((ur) => ({
+          role: ur.roleName,
           schoolId: ur.schoolId?.toString(),
-          schoolName: ur.school?.name,
+          schoolName: ur.schoolName,
         })),
         children,
       },
@@ -237,7 +221,9 @@ export class AuthService {
       await this.savePushToken(newUser.id, dto.firebaseToken);
     }
 
-    const tokens = await this.generateTokens(userWithRoles!);
+    const roles = userWithRoles!.userRoles.map((ur) => ur.role.name);
+    const schoolId = userWithRoles!.userRoles[0]?.schoolId ?? null;
+    const tokens = await this.generateTokens(userWithRoles!, roles, schoolId);
 
     return {
       accessToken: tokens.accessToken,
@@ -294,15 +280,73 @@ export class AuthService {
 
   // ── HELPERS PRIVADOS ───────────────────────────────────
 
-  // Genera el access token (corta duración) y refresh token (larga duración)
-  private async generateTokens(user: any) {
-    const roles = user.userRoles.map((ur: any) => ur.role.name);
+  // Carga roles + school del usuario en paralelo (A1 + A2).
+  // A1: separa la rama roles de la rama students (corren en Promise.all).
+  // A2: dentro de la rama roles, paraleliza roles y schools.
+  private async _loadRolesForLogin(userId: bigint) {
+    // 1 query: user_roles (solo los IDs necesarios)
+    const userRoles = await this.prisma.userRole.findMany({
+      where: { userId },
+      select: { roleId: true, schoolId: true },
+    });
 
+    const roleIds = [...new Set(userRoles.map((r) => r.roleId))];
+    const schoolIds = [
+      ...new Set(userRoles.map((r) => r.schoolId).filter((s): s is bigint => s !== null)),
+    ];
+
+    // A2: roles y schools en paralelo (independientes entre sí)
+    const [roles, schools] = await Promise.all([
+      this.prisma.role.findMany({ where: { id: { in: roleIds } } }),
+      schoolIds.length > 0
+        ? this.prisma.school.findMany({ where: { id: { in: schoolIds } } })
+        : Promise.resolve([]),
+    ]);
+
+    const roleMap = new Map(roles.map((r) => [r.id, r.name]));
+    const schoolMap = new Map(schools.map((s) => [s.id, s.name]));
+
+    return userRoles.map((ur) => ({
+      roleId: ur.roleId,
+      schoolId: ur.schoolId,
+      // El role siempre existe (dato de referencia); se asume igual que el
+      // findFirst original que accedía a ur.role.name directamente.
+      roleName: roleMap.get(ur.roleId)!,
+      schoolName: ur.schoolId !== null ? schoolMap.get(ur.schoolId) ?? null : null,
+    }));
+  }
+
+  // Carga students + enrollments + classroom del usuario (A1).
+  // Corre en paralelo con la rama roles.
+  private async _loadStudentsForLogin(userId: bigint) {
+    return this.prisma.userStudent.findMany({
+      where: { userId },
+      orderBy: { isPrimary: 'desc' },
+      include: {
+        student: {
+          select: {
+            id: true, firstName: true, lastName: true, code: true, birthday: true, avatar: true,
+            enrollments: {
+              select: { classroom: { select: { name: true } } },
+              orderBy: { academicYear: 'desc' },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  // Genera el access token (corta duración) y refresh token (larga duración)
+  private async generateTokens(
+    user: { id: bigint; email: string },
+    roles: string[],
+    schoolId: bigint | null,
+  ) {
     // schoolId del primer rol del usuario (mismo comportamiento que la consulta
     // original con joins en JwtStrategy). Se incluye en el payload para que
     // JwtStrategy.validate() NO necesite hacer joins a la BD en cada request
     // (el pooler de Supabase agrega ~1.9s por consulta con joins).
-    const schoolId = user.userRoles[0]?.schoolId ?? null;
 
     // Payload del JWT: datos que viajan dentro del token
     // NO incluir datos sensibles (contraseña, etc.)
