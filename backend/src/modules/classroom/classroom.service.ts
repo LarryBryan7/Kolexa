@@ -869,6 +869,157 @@ export class ClassroomService {
     return { connected: true, upcoming };
   }
 
+  // ── Vista combinada del home del padre ───────────────────
+  // Devuelve todaySummary + upcomingStatus en UNA sola petición, ejecutando
+  // TODAS las queries en una sola transacción $transaction. Con el pooler de
+  // Supabase (connection_limit=1), esto evita que las queries de los cards
+  // "Novedades" y "Esta semana" compitan por la única conexión y se
+  // serialicen (lo que alargaba el tiempo total a ~7s).
+  async getParentHome(studentId: bigint) {
+    const LIMA_OFFSET_MS = 5 * 60 * 60 * 1000;
+    const nowLima = new Date(Date.now() - LIMA_OFFSET_MS);
+    const todayStr = nowLima.toISOString().split('T')[0];
+    const todayDate = new Date(todayStr);
+    const dayOfWeek = nowLima.getUTCDay();
+    const currentMinutes = nowLima.getUTCHours() * 60 + nowLima.getUTCMinutes();
+
+    const limaToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
+    const limaDate = new Date(`${limaToday}T00:00:00.000-05:00`);
+    const daysToMonday = limaDate.getDay() === 0 ? 6 : limaDate.getDay() - 1;
+    const startOfThisWeek = new Date(limaDate.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
+
+    type SessionRow = {
+      id: bigint;
+      teacher_id: bigint;
+      created_at: Date;
+      photo_urls: unknown;
+      status: string | null;
+    };
+    type BlockRow = {
+      start_time: Date;
+      end_time: Date;
+      type: string;
+      course_name: string | null;
+    };
+    type TokenRow = { id: bigint };
+    type UpcomingRow = {
+      id: bigint;
+      course_id: bigint;
+      title: string;
+      description: string | null;
+      due_date: Date | null;
+      max_points: number | null;
+      work_type: string;
+      course_name: string;
+      course_section: string | null;
+    };
+
+    // La query de schedule_blocks depende del teacher_id de la sesión, así
+    // que primero obtenemos la sesión (1 conexión) y luego el resto en una
+    // transacción (1 conexión). Total 2 conexiones en vez de 4.
+    const sessionRows = await this.prisma.$queryRaw<SessionRow[]>`
+      SELECT s.id, s.teacher_id, s.created_at, s.photo_urls,
+             (SELECT r.status FROM gc_attendance_records r WHERE r.session_id = s.id ORDER BY r.id LIMIT 1) AS status
+      FROM gc_attendance_sessions s
+      WHERE s.date = ${todayDate}
+      ORDER BY s.created_at DESC
+      LIMIT 1
+    `;
+
+    const [blockRows, tokenRows, upcomingRows] = await this.prisma.$transaction([
+      this.prisma.$queryRaw<BlockRow[]>`
+        SELECT b.start_time, b.end_time, b.type, c.name AS course_name
+        FROM schedule_blocks b
+        LEFT JOIN gc_teacher_courses c ON b.gc_teacher_course_id = c.id
+        WHERE b.owner_id = ${sessionRows.length > 0 ? sessionRows[0].teacher_id : 0}
+          AND b.day_of_week = ${dayOfWeek}
+        ORDER BY b.start_time ASC
+      `,
+      this.prisma.$queryRaw<TokenRow[]>`SELECT id FROM google_tokens WHERE student_id = ${studentId} LIMIT 1`,
+      this.prisma.$queryRaw<UpcomingRow[]>`
+        SELECT cw.id, cw.course_id, cw.title, cw.description, cw.due_date, cw.max_points, cw.work_type,
+               c.name AS course_name, c.section AS course_section
+        FROM gc_coursework cw
+        JOIN gc_courses c ON cw.course_id = c.id
+        WHERE c.student_id = ${studentId}
+          AND cw.state = 'PUBLISHED'
+          AND cw.work_type != 'MATERIAL'
+          AND (cw.due_date >= ${startOfThisWeek} OR cw.due_date IS NULL)
+          AND NOT EXISTS (
+            SELECT 1 FROM gc_student_submissions s
+            WHERE s.coursework_id = cw.id
+              AND (s.submission_state IN ('TURNED_IN','RETURNED') OR s.assigned_grade IS NOT NULL)
+          )
+        ORDER BY cw.due_date ASC NULLS LAST
+        LIMIT 20
+      `,
+    ]);
+
+    // ── todaySummary ──
+    const session = sessionRows[0] ?? null;
+    const photoUrls: string[] = session && Array.isArray(session.photo_urls)
+      ? (session.photo_urls as string[])
+      : [];
+    const photoCount = photoUrls.length;
+    const arrivalStatus: string | null = session?.status ?? null;
+
+    let arrivalTime: string | null = null;
+    if (session) {
+      const d = new Date(session.created_at.getTime() - LIMA_OFFSET_MS);
+      const h = d.getUTCHours();
+      const m = String(d.getUTCMinutes()).padStart(2, '0');
+      const ampm = h >= 12 ? 'pm' : 'am';
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      arrivalTime = `${h12}:${m} ${ampm}`;
+    }
+
+    let currentCourse: string | null = null;
+    const scheduleBlocks: { courseName: string; startTime: string; endTime: string; isActive: boolean; type: string }[] = [];
+    for (const b of blockRows) {
+      const start = new Date(b.start_time);
+      const end = new Date(b.end_time);
+      const startMins = start.getUTCHours() * 60 + start.getUTCMinutes();
+      const endMins = end.getUTCHours() * 60 + end.getUTCMinutes();
+      const isActive = currentMinutes >= startMins && currentMinutes < endMins;
+      const fmt = (d: Date) => {
+        const hh = d.getUTCHours();
+        const mm = String(d.getUTCMinutes()).padStart(2, '0');
+        return `${hh}:${mm}`;
+      };
+      const name = b.type === 'recess' ? 'Recreo'
+        : b.type === 'break' ? 'Descanso'
+        : b.type === 'lunch' ? 'Almuerzo'
+        : (b.course_name ?? 'Clase');
+      if (isActive) currentCourse = name;
+      scheduleBlocks.push({
+        courseName: name,
+        startTime: fmt(start),
+        endTime: fmt(end),
+        isActive,
+        type: b.type,
+      });
+    }
+
+    const todaySummary = { arrivalStatus, arrivalTime, currentCourse, photoCount, photoUrls, scheduleBlocks };
+
+    // ── upcomingStatus ──
+    const connected = tokenRows.length > 0;
+    const upcoming = connected
+      ? upcomingRows.map((cw) => ({
+          id: cw.id.toString(),
+          courseId: cw.course_id.toString(),
+          title: cw.title,
+          description: cw.description,
+          dueDate: cw.due_date,
+          maxPoints: cw.max_points,
+          workType: cw.work_type,
+          course: { name: cw.course_name, section: cw.course_section },
+        }))
+      : [];
+
+    return { todaySummary, upcomingStatus: { connected, upcoming } };
+  }
+
   async isConnected(studentId: bigint): Promise<boolean> {
     const token = await this.prisma.googleToken.findUnique({
       where: { studentId },

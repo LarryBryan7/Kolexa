@@ -59,6 +59,16 @@ class ClassroomRepository {
     final res = await _api.get('classroom/parent/today-summary');
     return TodaySummary.fromJson(res.data as Map<String, dynamic>);
   }
+
+  /// Vista combinada del home del padre: todaySummary + upcomingStatus en
+  /// UNA sola petición. Ejecuta todas las queries en 1-2 conexiones al
+  /// pooler, evitando que los cards "Novedades" y "Esta semana" compitan por
+  /// la única conexión (connection_limit=1) y se serialicen.
+  Future<ParentHomeData> getParentHome(String studentId) async {
+    final res = await _api.get('classroom/parent/home?studentId=$studentId');
+    final data = res.data as Map<String, dynamic>;
+    return ParentHomeData.fromJson(data);
+  }
 }
 
 /// Resultado de la vista combinada `/overview`.
@@ -111,6 +121,27 @@ class UpcomingStatus {
       upcoming: (json['upcoming'] as List<dynamic>? ?? [])
           .map((c) => GcCoursework.fromJson(c as Map<String, dynamic>))
           .toList(),
+    );
+  }
+}
+
+/// Resultado de la vista combinada `/parent/home`.
+/// Contiene todaySummary + upcomingStatus en una sola respuesta.
+class ParentHomeData {
+  final TodaySummary todaySummary;
+  final UpcomingStatus upcomingStatus;
+
+  const ParentHomeData({
+    required this.todaySummary,
+    required this.upcomingStatus,
+  });
+
+  factory ParentHomeData.fromJson(Map<String, dynamic> json) {
+    return ParentHomeData(
+      todaySummary: TodaySummary.fromJson(
+          json['todaySummary'] as Map<String, dynamic>? ?? {}),
+      upcomingStatus: UpcomingStatus.fromJson(
+          json['upcomingStatus'] as Map<String, dynamic>? ?? {}),
     );
   }
 }
