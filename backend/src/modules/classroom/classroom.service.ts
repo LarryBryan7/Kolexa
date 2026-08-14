@@ -604,11 +604,6 @@ export class ClassroomService {
         data: allCws,
         skipDuplicates: true,
       });
-      // Refrescar syncedAt de todos los courseworks del estudiante (1 consulta)
-      await this.prisma.gcCoursework.updateMany({
-        where: { course: { studentId } },
-        data: { syncedAt: new Date() },
-      });
     }
 
     // 3c. Submissions: mapa googleId→id de courseworks del estudiante (1 consulta)
@@ -640,11 +635,6 @@ export class ClassroomService {
       await this.prisma.gcStudentSubmission.createMany({
         data: allSubs,
         skipDuplicates: true,
-      });
-      // Refrescar syncedAt de todos los submissions del estudiante (1 consulta)
-      await this.prisma.gcStudentSubmission.updateMany({
-        where: { coursework: { course: { studentId } } },
-        data: { syncedAt: new Date() },
       });
     }
 
