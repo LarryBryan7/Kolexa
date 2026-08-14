@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../../core/widgets/notification_banner.dart';
@@ -74,6 +75,16 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
   bool _showManualVerify = false;
   Timer? _verifyTimeout;
   Future<bool>? _classroomStatusFuture;
+  // Estado de conexión a Classroom conocido de forma síncrona (bool?).
+  // Se actualiza cuando resuelve `_classroomStatusFuture` (isConnected) y se
+  // usa para que el card "Esta semana" se muestre en estado de carga junto al
+  // de "Novedades" desde el inicio, sin esperar a /parent/home.
+  bool? _classroomConnected;
+  // Estado de conexión recordado por alumno (persistido en SharedPreferences).
+  // Permite saber de forma síncrona si un hijo está conectado a Classroom al
+  // entrar al Home o al cambiar de hijo, sin esperar a isConnected ni a
+  // /parent/home. Clave = studentId.
+  final Map<String, bool> _knownConnected = {};
   // Datos combinados del home del padre (todaySummary + upcomingStatus) en
   // UNA sola petición. Ambos cards ("Novedades" y "Esta semana") comparten
   // este resultado, evitando que compitan por la única conexión del pooler
@@ -89,6 +100,31 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     super.initState();
     _homeStartMs = DateTime.now().millisecondsSinceEpoch;
     WidgetsBinding.instance.addObserver(this);
+    // Cargamos (rápido, la instancia ya está cacheada por auth) el estado de
+    // conexión recordado por alumno, para que el card "Esta semana" pueda
+    // mostrarse en estado de carga junto al de "Novedades" desde el primer
+    // frame en la segunda entrada (cuando ya no hace falta conectar Classroom).
+    SharedPreferences.getInstance().then((p) {
+      if (!mounted) return;
+      final authState = context.read<AuthBloc>().state;
+      if (authState is AuthAuthenticated) {
+        for (final c in _buildChildren(authState)) {
+          final v = p.getBool(_gcConnectedKey(c.studentId));
+          if (v != null) {
+            _knownConnected[c.studentId] = v;
+          }
+        }
+        // Sembramos el estado de conexión del hijo actual de forma síncrona.
+        final children = _buildChildren(authState);
+        if (children.isNotEmpty) {
+          final sid = children[_selectedChild.clamp(0, children.length - 1)].studentId;
+          final known = _knownConnected[sid];
+          if (known != null) {
+            setState(() => _classroomConnected = known);
+          }
+        }
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _onRefresh();
       final authState = context.read<AuthBloc>().state;
@@ -122,15 +158,11 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _wentToClassroomBrowser) {
       setState(() => _wentToClassroomBrowser = false);
-      // Si venimos de conectar Google Classroom, la verificación automática
-      // (_verifyClassroomConnection) ya se encarga de sincronizar y refrescar.
-      // Evitamos llamar a _onRefresh en paralelo para que la card de conexión
-      // no reaparezca brevemente con un estado de conexión desactualizado.
-      if (!_waitingClassroomConfirm) {
-        _onRefresh();
-      }
-    }
-    if (state == AppLifecycleState.resumed && _waitingClassroomConfirm) {
+      // Volvimos del navegador de Google Classroom. Recién AHORA activamos el
+      // estado de verificación/carga ("Estamos cargando tus tareas...") y
+      // sincronizamos, porque el usuario ya aceptó (o no) los permisos.
+      // No llamamos a _onRefresh en paralelo para que la card de conexión no
+      // reaparezca brevemente con un estado de conexión desactualizado.
       _verifyClassroomConnection();
     }
   }
@@ -145,6 +177,17 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     final children = _buildChildren(authState);
     if (children.isNotEmpty) {
       final studentId = children[index.clamp(0, children.length - 1)].studentId;
+      // Sembramos el estado de conexión conocido de forma síncrona (si lo
+      // tenemos persistido) para que el card "Esta semana" se muestre en
+      // estado de carga junto al de "Novedades" desde el inicio.
+      setState(() => _classroomConnected = _knownConnected[studentId]);
+      _classroomStatusFuture =
+          ClassroomRepository(context.read<ApiClient>()).isConnected(studentId);
+      // Cuando isConnected resuelve, actualizamos y persistimos el estado.
+      _classroomStatusFuture!.then((connected) {
+        if (mounted) setState(() => _classroomConnected = connected);
+        _rememberConnected(studentId, connected);
+      });
       _loadParentHome(studentId);
     }
   }
@@ -154,6 +197,18 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     final children = _buildChildren(authState);
     if (children.isEmpty) return null;
     return children[_selectedChild.clamp(0, children.length - 1)].studentId;
+  }
+
+  String _gcConnectedKey(String studentId) => 'gc_connected_$studentId';
+
+  /// Guarda el estado de conexión conocido para este alumno: en memoria para
+  /// lectura síncrona inmediata y persistido en SharedPreferences para la
+  /// próxima entrada.
+  void _rememberConnected(String studentId, bool connected) {
+    _knownConnected[studentId] = connected;
+    SharedPreferences.getInstance().then((p) {
+      p.setBool(_gcConnectedKey(studentId), connected);
+    });
   }
 
   Future<void> _onRefresh({bool showErrors = false}) async {
@@ -178,6 +233,12 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
       // Classroom. Si no lo está, el backend devuelve 403 (llamada de red
       // innecesaria) — lo evitamos por completo.
       final connected = await statusFuture;
+      // Guardamos el estado de conexión conocido de forma síncrona para que
+      // el card "Esta semana" se muestre en estado de carga junto al de
+      // "Novedades" desde el inicio (sin esperar a /parent/home).
+      if (mounted) setState(() => _classroomConnected = connected);
+      // Persistimos el estado de conexión para la próxima entrada.
+      _rememberConnected(studentId, connected);
       if (connected) {
         try {
           await repo.sync(studentId);
@@ -227,19 +288,12 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
         return;
       }
       if (mounted) {
-        setState(() {
-          _waitingClassroomConfirm = true;
-          _showManualVerify = false;
-        });
-        // Si el flujo automático (didChangeAppLifecycleState) no detecta el
-        // regreso del navegador dentro de este tiempo, mostramos el botón
-        // manual "Ya autoricé, verificar" como respaldo.
-        _verifyTimeout?.cancel();
-        _verifyTimeout = Timer(const Duration(seconds: 8), () {
-          if (mounted && _waitingClassroomConfirm) {
-            setState(() => _showManualVerify = true);
-          }
-        });
+        // Marcamos que fuimos al navegador de Google. NO activamos
+        // _waitingClassroomConfirm aquí: el mensaje "Estamos cargando tus
+        // tareas..." SOLO debe aparecer DESPUÉS de volver del navegador y
+        // haber aceptado los permisos (ver didChangeAppLifecycleState →
+        // _verifyClassroomConnection), nunca antes de ir al navegador.
+        _wentToClassroomBrowser = true;
       }
     } catch (e) {
       if (mounted) {
@@ -271,20 +325,53 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
         _showManualVerify = false;
       });
     }
-    // Sincronizamos ANTES de mostrar la card "Esta semana" para que el
-    // conteo de pendientes ya incluya los datos recién traídos de Google.
+    // Verificamos REALMENTE si el usuario autorizó los permisos al volver del
+    // navegador. isConnected consulta el backend (devuelve true solo si hay
+    // token guardado). Esto cubre el caso en que el usuario vuelve SIN aceptar
+    // permisos (canceló): en ese caso NO debe marcarse como conectado.
+    bool connected = false;
+    try {
+      connected = await repo.isConnected(studentId);
+    } catch (_) {
+      connected = false;
+    }
+    if (!mounted) return;
+    if (!connected) {
+      // El usuario NO autorizó (canceló o volvió sin aceptar): NO marcamos el
+      // alumno como conectado. Dejamos el estado en "no conectado" para que el
+      // home vuelva a mostrar la card "Conectar Google Classroom" (botón
+      // "Conectar con Google") y NO la card "Esta semana".
+      setState(() {
+        _connectingClassroom = false;
+        _waitingClassroomConfirm = false;
+        _showManualVerify = false;
+        _classroomStatusFuture = Future.value(false);
+        _classroomConnected = false;
+      });
+      _rememberConnected(studentId, false);
+      return;
+    }
+    // El usuario SÍ autorizó: sincronizamos ANTES de mostrar la card "Esta
+    // semana" para que el conteo de pendientes ya incluya los datos recién
+    // traídos de Google.
     try { await repo.sync(studentId); } catch (_) {}
     if (!mounted) return;
-    // El usuario acaba de autorizar y el sync terminó: asumimos conectado
-    // directamente (Future.value(true)) en lugar de volver a consultar
-    // isConnected, para que la card de conexión NO reaparezca brevemente.
+    // Mantenemos "Estamos cargando tus tareas..." visible (waitingConfirm=true)
+    // mientras cargamos los datos combinados del home. Así el card "Esta
+    // semana" aparece YA con el conteo real ("N tareas" o "sin pendientes") y
+    // NO muestra "Sin pendientes" ni "Cargando tus tareas..." brevemente antes
+    // de actualizarse.
+    await _loadParentHome(studentId);
+    if (!mounted) return;
     setState(() {
       _connectingClassroom = false;
       _waitingClassroomConfirm = false;
       _showManualVerify = false;
       _classroomStatusFuture = Future.value(true);
-      _refreshKey++;
+      _classroomConnected = true;
     });
+    // Persistimos el estado de conexión para la próxima entrada.
+    _rememberConnected(studentId, true);
   }
 
   void _selectChild(int index) {
@@ -300,8 +387,17 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     final children = _buildChildren(authState);
     if (children.isNotEmpty) {
       final studentId = children[index.clamp(0, children.length - 1)].studentId;
+      // Sembramos el estado de conexión conocido de forma síncrona (si lo
+      // tenemos persistido) para que el card "Esta semana" se muestre en
+      // estado de carga junto al de "Novedades" desde el inicio.
+      setState(() => _classroomConnected = _knownConnected[studentId]);
       _classroomStatusFuture =
           ClassroomRepository(context.read<ApiClient>()).isConnected(studentId);
+      // Cuando isConnected resuelve, actualizamos y persistimos el estado.
+      _classroomStatusFuture!.then((connected) {
+        if (mounted) setState(() => _classroomConnected = connected);
+        _rememberConnected(studentId, connected);
+      });
       // Cargar los datos combinados del nuevo hijo.
       _loadParentHome(studentId);
     }
@@ -474,6 +570,17 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
                                 child: children[safeIndex],
                                 refreshKey: _refreshKey,
                                 upcomingStatus: _parentHome?.upcomingStatus,
+                                // Estado de conexión conocido de forma
+                                // síncrona (isConnected): permite que el card
+                                // se muestre en estado de carga junto al de
+                                // "Novedades" desde el inicio, sin esperar a
+                                // /parent/home.
+                                connected: _classroomConnected,
+                                // Mientras la card "Conectar Google Classroom"
+                                // muestra "Estamos cargando tus tareas...", el
+                                // card "Esta semana" se oculta para no mostrar
+                                // 2 cards a la vez.
+                                waitingConfirm: _waitingClassroomConfirm,
                               ),
                               const SizedBox(height: 12),
                             ],
@@ -1732,10 +1839,20 @@ class _EstaSemanRow extends StatefulWidget {
   /// upcomingStatus compartido desde el estado padre (cargado por
   /// /parent/home en la misma petición que "Novedades").
   final UpcomingStatus? upcomingStatus;
+  /// Estado de conexión a Classroom conocido de forma síncrona (isConnected).
+  /// Permite mostrar el card en estado de carga ("Cargando tus tareas...")
+  /// junto al de "Novedades" desde el inicio, sin esperar a /parent/home.
+  final bool? connected;
+  /// Mientras la card "Conectar Google Classroom" muestra "Estamos cargando
+  /// tus tareas..." (verificación tras volver del navegador), el card "Esta
+  /// semana" NO debe aparecer para evitar mostrar 2 cards a la vez.
+  final bool waitingConfirm;
   const _EstaSemanRow({
     required this.child,
     required this.refreshKey,
     required this.upcomingStatus,
+    this.connected,
+    this.waitingConfirm = false,
   });
 
   @override
@@ -1801,18 +1918,30 @@ class _EstaSemanRowState extends State<_EstaSemanRow> {
 
   String get _subtitle {
     if (_count == null) return 'Cargando tus tareas...';
-    if (_count == 0) return 'Todo al día esta semana';
-    return '$_count pendiente${_count != 1 ? 's' : ''} esta semana';
+    if (_count == 0) return 'Sin pendientes';
+    return '$_count tarea${_count != 1 ? 's' : ''}';
   }
 
   @override
   Widget build(BuildContext context) {
-    // Si el alumno no está conectado a Google Classroom, no mostramos el
-    // card. El estado connected viene de /parent/home (1 sola llamada), por
-    // lo que ya no dependemos del FutureBuilder de isConnected del home.
-    // Usamos `!= true` para ocultar el card también mientras no se conozca
-    // el estado de conexión (evita el flash del card con spinner).
-    if (_connected != true) return const SizedBox.shrink();
+    // REQUISITO (UX): el card "Esta semana" SOLO debe verse cuando el alumno
+    // está conectado a Google Classroom. Si NO está conectado, no debe
+    // aparecer en ningún momento (ni siquiera en estado de carga).
+    //
+    // La fuente canónica es `_connected` (viene de /parent/home). Mientras
+    // /parent/home aún no responde (_connected == null), usamos el estado de
+    // conexión conocido de forma síncrona (widget.connected, de isConnected)
+    // para que el card aparezca en estado de carga JUNTO al de "Novedades"
+    // desde el inicio, sin esperar a /parent/home — pero ÚNICAMENTE si ese
+    // estado conocido es `true` (conectado).
+    //
+    // Además, mientras la card "Conectar Google Classroom" está mostrando
+    // "Estamos cargando tus tareas..." (widget.waitingConfirm == true, durante
+    // la verificación tras volver del navegador), este card NO debe aparecer
+    // para evitar mostrar 2 cards a la vez.
+    final showCard = !widget.waitingConfirm &&
+        (_connected == true || (widget.connected == true && _connected == null));
+    if (!showCard) return const SizedBox.shrink();
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
