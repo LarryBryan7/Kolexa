@@ -41,9 +41,7 @@ export class AuthService {
   // ── LOGIN ──────────────────────────────────────────────
   // Verifica credenciales y devuelve accessToken + refreshToken
   async login(dto: LoginDto) {
-    const _t0 = Date.now();
     // 1. Buscar el usuario por email en la BD (solo campos directos, sin joins)
-    const _tFind = Date.now();
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
       select: {
@@ -51,7 +49,6 @@ export class AuthService {
         avatar: true, needsPasswordChange: true, isActive: true, deletedAt: true,
       },
     });
-    const _tBcrypt = Date.now();
 
     // Si el usuario no existe, está inactivo o eliminado → 401
     // (no decimos "email no encontrado" por seguridad — no queremos
@@ -63,13 +60,11 @@ export class AuthService {
     // 2. Verificar la contraseña + cargar roles/school y students/enrollments
     //    EN PARALELO (A1 + A2). bcrypt es CPU local; las dos ramas de BD son
     //    independientes entre sí y aprovechan connection_limit=5.
-    const _tParallel = Date.now();
     const [isPasswordValid, rolesData, studentsData] = await Promise.all([
       bcrypt.compare(dto.password, user.passwordHash),
       this._loadRolesForLogin(user.id),
       this._loadStudentsForLogin(user.id),
     ]);
-    const _tPush = Date.now();
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales incorrectas');
@@ -79,9 +74,9 @@ export class AuthService {
     // savePushToken NO es crítico para la respuesta del login: corre en paralelo
     // con generateTokens (que persiste el refresh token en BD y SÍ es awaited).
     // Cualquier error de savePushToken se captura y registra sin romper el login.
-    const _tTokens = Date.now();
-
-    const roles = rolesData.map((r) => r.roleName).filter((n): n is string => n !== null);
+    const roles = rolesData
+      .map((r) => r.roleName)
+      .filter((n): n is string => n !== null && n !== undefined);
     const schoolId = rolesData[0]?.schoolId ?? null;
 
     const [tokens] = await Promise.all([
@@ -117,15 +112,6 @@ export class AuthService {
     }
 
     // 6. Devolver los tokens y la información del usuario
-    const _tEnd = Date.now();
-    console.log(
-      `[AUTH-LOGIN]\n` +
-        `findUserMs=${_tBcrypt - _tFind}\n` +
-        `parallelMs=${_tPush - _tParallel}\n` +
-        `pushTokenMs=${_tTokens - _tPush}\n` +
-        `tokensMs=${_tEnd - _tTokens}\n` +
-        `totalMs=${_tEnd - _t0}`,
-    );
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -296,13 +282,11 @@ export class AuthService {
   // A1: separa la rama roles de la rama students (corren en Promise.all).
   // A2: dentro de la rama roles, paraleliza roles y schools.
   private async _loadRolesForLogin(userId: bigint) {
-    const _t0 = Date.now();
     // 1 query: user_roles (solo los IDs necesarios)
     const userRoles = await this.prisma.userRole.findMany({
       where: { userId },
       select: { roleId: true, schoolId: true },
     });
-    const _tRoles = Date.now();
 
     const roleIds = [...new Set(userRoles.map((r) => r.roleId))];
     const schoolIds = [
@@ -316,14 +300,6 @@ export class AuthService {
         ? this.prisma.school.findMany({ where: { id: { in: schoolIds } } })
         : Promise.resolve([]),
     ]);
-    const _tEnd = Date.now();
-
-    console.log(
-      `[AUTH-LOGIN-ROLES]\n` +
-        `userRolesMs=${_tRoles - _t0}\n` +
-        `rolesSchoolsMs=${_tEnd - _tRoles}\n` +
-        `totalMs=${_tEnd - _t0}`,
-    );
 
     const roleMap = new Map(roles.map((r) => [r.id, r.name]));
     const schoolMap = new Map(schools.map((s) => [s.id, s.name]));
@@ -347,8 +323,6 @@ export class AuthService {
   //   - Fase 3: classrooms (depende de los classroomIds de enrollments).
   // El resultado reconstruido es idéntico al include original.
   private async _loadStudentsForLogin(userId: bigint) {
-    const _t0 = Date.now();
-
     // Fase 1: user_students (ordenados por isPrimary desc, igual que el include original)
     const userStudents = await this.prisma.userStudent.findMany({
       where: { userId },
@@ -382,9 +356,6 @@ export class AuthService {
           select: { id: true, name: true },
         })
       : [];
-
-    const _tEnd = Date.now();
-    console.log(`[AUTH-LOGIN-STUDENTS] totalMs=${_tEnd - _t0}`);
 
     // Reconstruir la estructura equivalente al include original:
     // userStudents[].student.{...campos, enrollments:[{classroom:{name}}]}
