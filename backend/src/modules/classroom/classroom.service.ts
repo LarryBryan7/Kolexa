@@ -458,7 +458,7 @@ export class ClassroomService {
   }
 
   // ── Sincroniza cursos y tareas desde Google Classroom ────
-  async syncStudent(studentId: bigint): Promise<{ courses: number; courseworks: number }> {
+  async syncStudent(studentId: bigint): Promise<{ courses: number; courseworks: number; cacheHit: boolean }> {
     // ── Caché: si el último sync fue hace menos de 5 minutos, no llamamos a
     // Google de nuevo. Devolvemos los datos ya sincronizados de la BD local.
     // Optimización: en lugar de 3 consultas (findFirst + 2 counts) que el pooler
@@ -487,7 +487,7 @@ export class ClassroomService {
     // volver a hacer el sync completo (~26s).
     const cacheHit = !!lastSyncedAt && diffMs < 15 * 60 * 1000;
     if (cacheHit) {
-      return { courses: cachedCourses, courseworks: cachedCourseworks };
+      return { courses: cachedCourses, courseworks: cachedCourseworks, cacheHit: true };
     }
 
     const auth = await this.getAuthClientForStudent(studentId);
@@ -638,7 +638,7 @@ export class ClassroomService {
       });
     }
 
-    return { courses: perCourse.length, courseworks: totalCourseworks };
+    return { courses: perCourse.length, courseworks: totalCourseworks, cacheHit: false };
   }
 
   // ── Retorna los cursos sincronizados del alumno ──────────

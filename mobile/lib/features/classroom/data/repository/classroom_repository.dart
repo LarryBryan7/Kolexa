@@ -15,12 +15,9 @@ class ClassroomRepository {
     return res.data['connected'] as bool;
   }
 
-  Future<Map<String, int>> sync(String studentId) async {
+  Future<SyncResult> sync(String studentId) async {
     final res = await _api.post('classroom/student/$studentId/sync');
-    return {
-      'courses': res.data['courses'] as int,
-      'courseworks': res.data['courseworks'] as int,
-    };
+    return SyncResult.fromJson(res.data as Map<String, dynamic>);
   }
 
   Future<List<GcCourse>> getCourses(String studentId) async {
@@ -219,4 +216,27 @@ class TodaySummary {
   }
 
   String get photoLabel => photoCount > 0 ? '$photoCount nueva${photoCount != 1 ? 's' : ''}' : '–';
+}
+
+/// Resultado de POST /sync. cacheHit=true ⇒ el backend respondió desde su
+/// caché de 15 min (sin llamar a Google) y los datos de /parent/home ya están
+/// frescos; cacheHit=false ⇒ hubo sync completo contra Google y conviene
+/// recargar /parent/home para que el conteo incluya los datos nuevos.
+/// cacheHit usa `?? false` para mantener compatibilidad con backends previos
+/// que aún no devuelven el campo (asume cache miss → recarga segura).
+class SyncResult {
+  final int courses;
+  final int courseworks;
+  final bool cacheHit;
+  const SyncResult({
+    required this.courses,
+    required this.courseworks,
+    required this.cacheHit,
+  });
+
+  factory SyncResult.fromJson(Map<String, dynamic> json) => SyncResult(
+        courses: json['courses'] as int? ?? 0,
+        courseworks: json['courseworks'] as int? ?? 0,
+        cacheHit: json['cacheHit'] as bool? ?? false,
+      );
 }
