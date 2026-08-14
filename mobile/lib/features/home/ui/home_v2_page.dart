@@ -1808,9 +1808,11 @@ class _EstaSemanRowState extends State<_EstaSemanRow> {
   @override
   Widget build(BuildContext context) {
     // Si el alumno no está conectado a Google Classroom, no mostramos el
-    // card. El estado connected viene de /overview (1 sola llamada), por lo
-    // que ya no dependemos del FutureBuilder de isConnected del home.
-    if (_connected == false) return const SizedBox.shrink();
+    // card. El estado connected viene de /parent/home (1 sola llamada), por
+    // lo que ya no dependemos del FutureBuilder de isConnected del home.
+    // Usamos `!= true` para ocultar el card también mientras no se conozca
+    // el estado de conexión (evita el flash del card con spinner).
+    if (_connected != true) return const SizedBox.shrink();
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
