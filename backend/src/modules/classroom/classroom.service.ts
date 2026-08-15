@@ -223,21 +223,31 @@ export class ClassroomService {
     // varios cursos. Ahora se lanzan en paralelo con Promise.all → ~4-6s.
     const perCourse = await Promise.all(
       courses.map(async (course: any) => {
-        // 1. Roster de alumnos del curso (en paralelo con las tareas)
-        let fetchedStudents: any[] = [];
-        try {
-          const { data: studentsData } = await classroomApi.courses.students.list({
-            courseId: course.id!,
-          });
-          fetchedStudents = studentsData.students ?? [];
-        } catch (_) {}
-
-        // 2. Tareas publicadas del curso
-        const { data: cwData } = await classroomApi.courses.courseWork.list({
-          courseId: course.id!,
-          courseWorkStates: ['PUBLISHED'],
-        });
-        const courseworks = cwData.courseWork ?? [];
+        // 1 + 2. Roster de alumnos y tareas publicadas del curso en paralelo (O1).
+        //    Ambas llamadas dependen únicamente de course.id y son independientes entre
+        //    sí, por lo que se lanzan juntas con Promise.all para solapar sus round-trips.
+        //    Se preserva el try/catch de students.list (roster opcional) y el resultado.
+        const [studentsResult, cwResult] = await Promise.all([
+          (async () => {
+            let fetchedStudents: any[] = [];
+            try {
+              const { data: studentsData } = await classroomApi.courses.students.list({
+                courseId: course.id!,
+              });
+              fetchedStudents = studentsData.students ?? [];
+            } catch (_) {}
+            return fetchedStudents;
+          })(),
+          (async () => {
+            const { data: cwData } = await classroomApi.courses.courseWork.list({
+              courseId: course.id!,
+              courseWorkStates: ['PUBLISHED'],
+            });
+            return cwData.courseWork ?? [];
+          })(),
+        ]);
+        const fetchedStudents = studentsResult;
+        const courseworks = cwResult;
 
         // 3. Entregas (submissions) de TODAS las tareas en paralelo
         const submissionsByCw = await Promise.all(
