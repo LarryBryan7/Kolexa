@@ -127,7 +127,32 @@ export class ClassroomService {
   }
 
   // ── Sincroniza cursos y entregas del docente ─────────────
-  async syncTeacher(userId: bigint): Promise<{ courses: number; submissions: number }> {
+  async syncTeacher(userId: bigint): Promise<{ courses: number; submissions: number; cacheHit: boolean }> {
+    // ── Caché corta (TTL ~60s): evita llamar a Google en cada entrada/refresh.
+    // El docente necesita entregas recientes, por eso el TTL es corto (a diferencia
+    // de los 15 min del alumno). Una sola consulta SQL devuelve last_synced_at +
+    // course_count + submission_count en una ida al pooler.
+    type CacheRow = {
+      last_synced_at: Date | null;
+      course_count: bigint;
+      submission_count: bigint;
+    };
+    const rows = await this.prisma.$queryRaw<CacheRow[]>`
+      SELECT
+        (SELECT synced_at FROM gc_teacher_courses WHERE teacher_id = ${userId} ORDER BY synced_at DESC LIMIT 1) AS last_synced_at,
+        (SELECT COUNT(*) FROM gc_teacher_courses WHERE teacher_id = ${userId}) AS course_count,
+        (SELECT COUNT(*) FROM gc_teacher_submissions s JOIN gc_teacher_courses c ON s.course_id = c.id WHERE c.teacher_id = ${userId}) AS submission_count
+    `;
+    const row = rows[0];
+    const lastSyncedAt = row?.last_synced_at ?? null;
+    const cachedCourses = Number(row?.course_count ?? 0);
+    const cachedSubmissions = Number(row?.submission_count ?? 0);
+    const diffMs = lastSyncedAt ? Date.now() - lastSyncedAt.getTime() : -1;
+    const cacheHit = !!lastSyncedAt && diffMs < 60 * 1000;
+    if (cacheHit) {
+      return { courses: cachedCourses, submissions: cachedSubmissions, cacheHit: true };
+    }
+
     const auth = await this.getAuthClientForTeacher(userId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const classroomApi = google.classroom({ version: 'v1', auth } as any) as any;
@@ -266,7 +291,7 @@ export class ClassroomService {
       }
     }
 
-    return { courses: courses.length, submissions: totalSubmissions };
+    return { courses: courses.length, submissions: totalSubmissions, cacheHit: false };
   }
 
   // ── Retorna cursos del docente sincronizados ─────────────
@@ -365,9 +390,14 @@ export class ClassroomService {
     return { arrivalStatus, arrivalTime, currentCourse, photoCount, photoUrls, scheduleBlocks };
   }
 
-  async getTeacherRoster(userId: bigint) {
+  async getTeacherRoster(userId: bigint, courseId?: bigint) {
+    // Aditivo (P1-6): si se pasa courseId, devuelve el roster de ESE curso.
+    // Sin courseId mantiene el comportamiento previo (primer curso) para no
+    // romper AttendancePage.
     const course = await this.prisma.gcTeacherCourse.findFirst({
-      where: { teacherId: userId },
+      where: courseId
+        ? { teacherId: userId, id: courseId }
+        : { teacherId: userId },
       include: { students: { orderBy: { fullName: 'asc' } } },
       orderBy: { name: 'asc' },
     });
