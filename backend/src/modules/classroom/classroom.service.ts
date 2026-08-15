@@ -493,11 +493,9 @@ export class ClassroomService {
           state: string;
           submittedAt: Date | null;
         }[] = [];
-        const subCourseIds = new Set<bigint>();
         for (const { course, submissionsByCw } of perCourse) {
           const courseId = courseIdByGoogle.get(course.id!);
           if (!courseId) continue;
-          subCourseIds.add(courseId);
           for (const { cw, subs } of submissionsByCw) {
             for (const sub of subs) {
               allSubs.push({
@@ -513,20 +511,30 @@ export class ClassroomService {
           }
         }
 
-        // Insertar submissions nuevas (skipDuplicates respeta @@unique([courseId, courseworkGoogleId, studentGoogleId]))
+        // Upsert masivo de submissions en UNA sola operación.
+        //     Reemplaza el createMany (nuevos) + updateMany (syncedAt) por un único
+        //     INSERT ... ON CONFLICT (course_id, coursework_google_id, student_google_id)
+        //     DO UPDATE parametrizado.
+        //     - INSERT: submissions nuevas, con syncedAt=NOW().
+        //     - ON CONFLICT DO UPDATE: actualiza coursework_title/state/submitted_at/
+        //       synced_at de las existentes (refresca TTL). No elimina registros.
+        //     - No hay campo equivalente a studentId que deba preservarse: todos los
+        //       campos de datos son seguros de sobrescribir.
+        //     Se usa Prisma.sql/Prisma.join: todos los valores dinámicos van como
+        //     parámetros bind (nunca interpolados) → sin riesgo de SQL injection.
         if (allSubs.length > 0) {
-          await this.prisma.gcTeacherSubmission.createMany({
-            data: allSubs,
-            skipDuplicates: true,
-          });
-        }
-
-        // Refrescar syncedAt de las submissions existentes (1 query, refresca TTL)
-        if (subCourseIds.size > 0) {
-          await this.prisma.gcTeacherSubmission.updateMany({
-            where: { courseId: { in: [...subCourseIds] } },
-            data: { syncedAt: new Date() },
-          });
+          const valueRows = allSubs.map((s) =>
+            Prisma.sql`(${s.courseId}::bigint, ${s.courseworkGoogleId}::text, ${s.courseworkTitle}::text, ${s.studentGoogleId}::text, ${s.state}::text, ${s.submittedAt}::timestamptz, NOW())`,
+          );
+          await this.prisma.$executeRaw`
+            INSERT INTO "gc_teacher_submissions" (course_id, coursework_google_id, coursework_title, student_google_id, state, submitted_at, synced_at)
+            VALUES ${Prisma.join(valueRows)}
+            ON CONFLICT (course_id, coursework_google_id, student_google_id) DO UPDATE
+            SET coursework_title = EXCLUDED.coursework_title,
+                state = EXCLUDED.state,
+                submitted_at = EXCLUDED.submitted_at,
+                synced_at = NOW()
+          `;
         }
         const t8 = Date.now();
         console.log(`[TEACHER-SYNC] submissions-db = ${t8 - s0} ms`);
