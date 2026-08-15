@@ -300,11 +300,15 @@ export class ClassroomService {
       });
     }
 
-    // 1d. Actualizar cursos existentes (1 transacción: 1 BEGIN + N UPDATE + 1 COMMIT,
-    //     en lugar de N updates con transacción implícita cada uno)
-    if (existingCoursesData.length > 0) {
-      await this.prisma.$transaction(
-        existingCoursesData.map((c) =>
+    // 1d. Actualizar cursos existentes (paralelo en lotes de máximo BATCH=5).
+    //     $transaction con array ejecuta los updates SECUENCIALMENTE (1 BEGIN + N UPDATE
+    //     + 1 COMMIT), lo que encarece el bloque. En su lugar se lanzan los updates en
+    //     paralelo por lotes de 5 (patrón de batching del código original), respetando
+    //     el límite de conexiones (connection_limit=5).
+    for (let i = 0; i < existingCoursesData.length; i += BATCH) {
+      const batch = existingCoursesData.slice(i, i + BATCH);
+      await Promise.all(
+        batch.map((c) =>
           this.prisma.gcTeacherCourse.update({
             where: { teacherId_googleId: { teacherId: userId, googleId: c.googleId } },
             data: {
