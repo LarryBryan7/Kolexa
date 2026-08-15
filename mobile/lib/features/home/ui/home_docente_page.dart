@@ -55,6 +55,9 @@ class _HomeDocentePageState extends State<HomeDocentePage>
   late Future<int> _pendingFuture;
   late Future<List<ScheduleSlot>> _scheduleFuture;
   bool _waitingClassroomConfirm = false;
+  // Guard de reentrada (equivale a Mejora D del padre): evita syncs a Google
+  // concurrentes entre post-frame, pull-to-refresh y resume.
+  bool _refreshing = false;
 
   @override
   void initState() {
@@ -62,7 +65,9 @@ class _HomeDocentePageState extends State<HomeDocentePage>
     WidgetsBinding.instance.addObserver(this);
     final repo = TeacherRepository(context.read<ApiClient>());
     _homeDataFuture = repo.getHomeData();
-    _classroomStatusFuture = repo.isClassroomConnected();
+    // Fuente única de `connected` (Mejora A del padre): se deriva de getHomeData,
+    // eliminando el GET /classroom/teacher/status redundante.
+    _classroomStatusFuture = _homeDataFuture.then((d) => d.connected);
     _coursesFuture = repo.getCourses();
     _pendingFuture = repo.getPendingCount();
     _scheduleFuture = repo.getTodaySchedule();
@@ -77,15 +82,36 @@ class _HomeDocentePageState extends State<HomeDocentePage>
   }
 
   Future<void> _syncOnLogin() async {
-    final repo = TeacherRepository(context.read<ApiClient>());
-    try { await repo.syncClassroom(); } catch (_) {}
-    if (!mounted) return;
-    setState(() {
-      _homeDataFuture = repo.getHomeData();
-      _coursesFuture = repo.getCourses();
-      _pendingFuture = repo.getPendingCount();
-      _scheduleFuture = repo.getTodaySchedule();
-    });
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      final repo = TeacherRepository(context.read<ApiClient>());
+      // Espera el primer getHomeData (ya lanzado en initState) para conocer
+      // `connected` sin un request extra a /status.
+      final home = await _homeDataFuture;
+      if (!mounted) return;
+      // Sync solo si el docente está conectado (evita 403 y llamadas a Google).
+      var cacheHit = false;
+      if (home.connected) {
+        try {
+          final result = await repo.syncClassroom();
+          cacheHit = result.cacheHit;
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      setState(() {
+        _homeDataFuture = repo.getHomeData();
+        _classroomStatusFuture = _homeDataFuture.then((d) => d.connected);
+        // Si hubo cache hit, no re-lanzar courses/pending/schedule (Mejora C).
+        if (!cacheHit) {
+          _coursesFuture = repo.getCourses();
+          _pendingFuture = repo.getPendingCount();
+          _scheduleFuture = repo.getTodaySchedule();
+        }
+      });
+    } finally {
+      _refreshing = false;
+    }
   }
 
   void _onAttendanceComplete() {
@@ -132,18 +158,35 @@ class _HomeDocentePageState extends State<HomeDocentePage>
   }
 
   Future<void> _onRefresh() async {
-    final repo = TeacherRepository(context.read<ApiClient>());
-    try { await repo.syncClassroom(); } catch (_) {}
-    if (!mounted) return;
-    setState(() {
-      _homeDataFuture = repo.getHomeData();
-      _classroomStatusFuture = repo.isClassroomConnected();
-      _coursesFuture = repo.getCourses();
-      _pendingFuture = repo.getPendingCount();
-      _scheduleFuture = repo.getTodaySchedule();
-      _waitingClassroomConfirm = false;
-    });
-    await Future.wait([_homeDataFuture, _classroomStatusFuture]);
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      final repo = TeacherRepository(context.read<ApiClient>());
+      // Sync solo si el docente está conectado (evita 403 y llamadas a Google).
+      final home = await _homeDataFuture;
+      var cacheHit = false;
+      if (home.connected) {
+        try {
+          final result = await repo.syncClassroom();
+          cacheHit = result.cacheHit;
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      setState(() {
+        _homeDataFuture = repo.getHomeData();
+        _classroomStatusFuture = _homeDataFuture.then((d) => d.connected);
+        // Si hubo cache hit, no re-lanzar courses/pending/schedule (Mejora C).
+        if (!cacheHit) {
+          _coursesFuture = repo.getCourses();
+          _pendingFuture = repo.getPendingCount();
+          _scheduleFuture = repo.getTodaySchedule();
+        }
+        _waitingClassroomConfirm = false;
+      });
+      await Future.wait([_homeDataFuture, _classroomStatusFuture]);
+    } finally {
+      _refreshing = false;
+    }
   }
 
   Future<void> _connectClassroom() async {
@@ -168,23 +211,32 @@ class _HomeDocentePageState extends State<HomeDocentePage>
   }
 
   Future<void> _verifyClassroomConnection() async {
-    final repo = TeacherRepository(context.read<ApiClient>());
-    if (mounted) {
-      setState(() {
-        _waitingClassroomConfirm = false;
-        _classroomStatusFuture = repo.isClassroomConnected();
-      });
-    }
+    if (_refreshing) return;
+    _refreshing = true;
     try {
-      await repo.syncClassroom();
-    } catch (_) {}
-    if (!mounted) return;
-    setState(() {
-      _classroomStatusFuture = repo.isClassroomConnected();
-      _coursesFuture = repo.getCourses();
-      _pendingFuture = repo.getPendingCount();
-      _homeDataFuture = repo.getHomeData();
-    });
+      final repo = TeacherRepository(context.read<ApiClient>());
+      if (mounted) {
+        setState(() => _waitingClassroomConfirm = false);
+      }
+      var cacheHit = false;
+      try {
+        final result = await repo.syncClassroom();
+        cacheHit = result.cacheHit;
+      } catch (_) {}
+      if (!mounted) return;
+      // Fuente única de `connected`: getHomeData (Mejora A). Sin doble /status.
+      setState(() {
+        _homeDataFuture = repo.getHomeData();
+        _classroomStatusFuture = _homeDataFuture.then((d) => d.connected);
+        // Si hubo cache hit, no re-lanzar courses/pending (Mejora C).
+        if (!cacheHit) {
+          _coursesFuture = repo.getCourses();
+          _pendingFuture = repo.getPendingCount();
+        }
+      });
+    } finally {
+      _refreshing = false;
+    }
   }
 
   @override

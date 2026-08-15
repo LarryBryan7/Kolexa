@@ -91,10 +91,20 @@ export class ClassroomController {
   }
 
   // ── POST /classroom/teacher/sync ─────────────────────────
+  // Traduce invalid_grant/invalid_token a 401 TOKEN_EXPIRED (igual que el sync
+  // del alumno) para que el móvil ofrezca "reconectar" cuando el token caduca.
   @UseGuards(JwtAuthGuard)
   @Post('teacher/sync')
   async syncTeacher(@Request() req: any) {
-    return this.classroomService.syncTeacher(BigInt(req.user.sub));
+    try {
+      return await this.classroomService.syncTeacher(BigInt(req.user.sub));
+    } catch (e: any) {
+      const msg: string = e?.response?.data?.error ?? e?.message ?? '';
+      if (msg.includes('invalid_grant') || msg.includes('invalid_token')) {
+        throw new UnauthorizedException('TOKEN_EXPIRED');
+      }
+      throw e;
+    }
   }
 
   // ── GET /classroom/teacher/courses ───────────────────────
@@ -104,11 +114,15 @@ export class ClassroomController {
     return this.classroomService.getTeacherCourses(BigInt(req.user.sub));
   }
 
-  // ── GET /classroom/teacher/roster ────────────────────────
+  // ── GET /classroom/teacher/roster?courseId=X ─────────────
+  // courseId es opcional (P1-6): si se pasa, devuelve el roster de ese curso.
   @UseGuards(JwtAuthGuard)
   @Get('teacher/roster')
-  async getTeacherRoster(@Request() req: any) {
-    return this.classroomService.getTeacherRoster(BigInt(req.user.sub));
+  async getTeacherRoster(@Request() req: any, @Query('courseId') courseId?: string) {
+    return this.classroomService.getTeacherRoster(
+      BigInt(req.user.sub),
+      courseId ? BigInt(courseId) : undefined,
+    );
   }
 
   // ── GET /classroom/teacher/pending ───────────────────────

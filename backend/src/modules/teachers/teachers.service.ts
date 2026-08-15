@@ -25,23 +25,45 @@ export class TeachersService {
   ) {}
 
   async getHomeData(userId: bigint) {
-    // Salones donde el docente tiene al menos un curso asignado
-    const classroomRows = await this.prisma.$queryRaw<
-      { id: bigint; name: string; grade: string; section: string; student_count: bigint }[]
-    >`
-      SELECT
-        cl.id,
-        cl.name,
-        cl.grade,
-        cl.section,
-        COUNT(DISTINCT se.student_id) AS student_count
-      FROM classroom_courses cc
-      JOIN classrooms cl ON cl.id = cc.classroom_id
-      LEFT JOIN student_enrollments se ON se.classroom_id = cl.id
-      WHERE cc.teacher_id = ${userId}
-      GROUP BY cl.id, cl.name, cl.grade, cl.section
-      ORDER BY cl.name
-    `;
+    // Fecha en zona horaria Lima (UTC-5). new Date().toISOString() devuelve UTC,
+    // lo que después de las 7pm peruana retorna la fecha de mañana.
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
+    const todayDate = new Date(todayStr);
+
+    // ── Optimización (P2-7): lanzar en paralelo las queries independientes ──
+    // Antes eran 4-5 round-trips secuenciales al pooler (connection_limit 1-5).
+    // classroomRows, session y token no dependen entre sí → Promise.all.
+    const [classroomRows, session, token] = await Promise.all([
+      // Salones donde el docente tiene al menos un curso asignado
+      this.prisma.$queryRaw<
+        { id: bigint; name: string; grade: string; section: string; student_count: bigint }[]
+      >`
+        SELECT
+          cl.id,
+          cl.name,
+          cl.grade,
+          cl.section,
+          COUNT(DISTINCT se.student_id) AS student_count
+        FROM classroom_courses cc
+        JOIN classrooms cl ON cl.id = cc.classroom_id
+        LEFT JOIN student_enrollments se ON se.classroom_id = cl.id
+        WHERE cc.teacher_id = ${userId}
+        GROUP BY cl.id, cl.name, cl.grade, cl.section
+        ORDER BY cl.name
+      `,
+      // Sesión de asistencia de hoy
+      this.prisma.gcAttendanceSession.findUnique({
+        where: { teacherId_date: { teacherId: userId, date: todayDate } },
+        include: { records: { select: { status: true } } },
+      }),
+      // Fuente única de `connected` (equivale a Mejora A del padre): evita el
+      // GET /classroom/teacher/status redundante en el flujo del Home.
+      this.prisma.teacherGoogleToken.findUnique({
+        where: { userId },
+        select: { id: true },
+      }),
+    ]);
+    const connected = !!token;
 
     const classrooms = classroomRows.map((r) => ({
       id: Number(r.id),
@@ -86,16 +108,6 @@ export class TeachersService {
       gcStudentCount = gcCourse?.studentCount ?? null;
     }
 
-    // Fecha en zona horaria Lima (UTC-5). new Date().toISOString() devuelve UTC,
-    // lo que después de las 7pm peruana retorna la fecha de mañana.
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
-    const todayDate = new Date(todayStr);
-
-    const session = await this.prisma.gcAttendanceSession.findUnique({
-      where: { teacherId_date: { teacherId: userId, date: todayDate } },
-      include: { records: { select: { status: true } } },
-    });
-
     let attendanceState = 'none';
     let attendanceSummary: { present: number; late: number; absent: number; total: number } | null = null;
 
@@ -108,7 +120,7 @@ export class TeachersService {
       attendanceSummary = { present, late, absent, total: present + late + absent };
     }
 
-    return { classrooms, hasSchedule, gcSection, gcStudentCount, attendanceState, attendanceSummary };
+    return { classrooms, hasSchedule, gcSection, gcStudentCount, attendanceState, attendanceSummary, connected };
   }
 
   async saveAttendance(userId: bigint, date: string, records: AttendanceRecordInput[]) {
