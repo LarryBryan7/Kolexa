@@ -128,6 +128,8 @@ export class ClassroomService {
 
   // ── Sincroniza cursos y entregas del docente ─────────────
   async syncTeacher(userId: bigint): Promise<{ courses: number; submissions: number; cacheHit: boolean }> {
+    console.log('[TEACHER-SYNC] start');
+    const t0 = Date.now();
     // ── Caché corta (TTL ~60s): evita llamar a Google en cada entrada/refresh.
     // El docente necesita entregas recientes, por eso el TTL es corto (a diferencia
     // de los 15 min del alumno). Una sola consulta SQL devuelve last_synced_at +
@@ -152,8 +154,12 @@ export class ClassroomService {
     if (cacheHit) {
       return { courses: cachedCourses, submissions: cachedSubmissions, cacheHit: true };
     }
+    const t1 = Date.now();
+    console.log(`[TEACHER-SYNC] cache-check = ${t1 - t0} ms`);
 
     const auth = await this.getAuthClientForTeacher(userId);
+    const t2 = Date.now();
+    console.log(`[TEACHER-SYNC] auth = ${t2 - t1} ms`);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const classroomApi = google.classroom({ version: 'v1', auth } as any) as any;
 
@@ -188,12 +194,16 @@ export class ClassroomService {
         if (count === 1) studentsByNormalizedName.set(name, nameToId.get(name)!);
       }
     }
+    const t3 = Date.now();
+    console.log(`[TEACHER-SYNC] student-matching = ${t3 - t2} ms`);
 
     const { data: coursesData } = await classroomApi.courses.list({
       teacherId: 'me',
       courseStates: ['ACTIVE'],
     });
     const courses = coursesData.courses ?? [];
+    const t4 = Date.now();
+    console.log(`[TEACHER-SYNC] courses-list = ${t4 - t3} ms`);
 
     // ── Optimización: lanzar TODAS las peticiones a Google en paralelo ──
     // Antes: por cada curso se hacían students.list + courseWork.list +
@@ -236,6 +246,8 @@ export class ClassroomService {
         return { course, fetchedStudents, courseworks, submissionsByCw };
       }),
     );
+    const t5 = Date.now();
+    console.log(`[TEACHER-SYNC] google-data = ${t5 - t4} ms`);
 
     let totalSubmissions = 0;
 
@@ -277,6 +289,8 @@ export class ClassroomService {
         courseIdByGoogle.set(r.googleId, r.id);
       }
     }
+    const t6 = Date.now();
+    console.log(`[TEACHER-SYNC] courses-db = ${t6 - t5} ms`);
 
     // 2. Roster de alumnos: createMany (nuevos) + updateMany (syncedAt / studentId)
     //    por curso. El studentId se resuelve con el Map precargado (sin N+1).
@@ -345,6 +359,8 @@ export class ClassroomService {
         }
       }
     }
+    const t7 = Date.now();
+    console.log(`[TEACHER-SYNC] roster-db = ${t7 - t6} ms`);
 
     // 3. Submissions: createMany (nuevos) + updateMany (syncedAt / state).
     //    El filtro de Google ya es TURNED_IN, así que state es constante.
@@ -391,6 +407,9 @@ export class ClassroomService {
         data: { syncedAt: new Date() },
       });
     }
+    const t8 = Date.now();
+    console.log(`[TEACHER-SYNC] submissions-db = ${t8 - t7} ms`);
+    console.log(`[TEACHER-SYNC] total = ${Date.now() - t0} ms`);
 
     return { courses: courses.length, submissions: totalSubmissions, cacheHit: false };
   }
