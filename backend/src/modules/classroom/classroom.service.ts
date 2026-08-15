@@ -262,10 +262,18 @@ export class ClassroomService {
 
     // 1. Upsert de cursos en lotes de 5 (connection_limit=5), como syncStudent.
     //    Devuelve el id local para construir las relaciones roster/submissions.
+    console.log(`[TEACHER-COURSES] start courses=${perCourse.length} batchSize=${BATCH}`);
+    const c0 = Date.now();
+    const totalBatches = Math.ceil(perCourse.length / BATCH);
+    console.log(`[TEACHER-COURSES] totalBatches=${totalBatches}`);
     for (let i = 0; i < perCourse.length; i += BATCH) {
       const batch = perCourse.slice(i, i + BATCH);
+      const batchIndex = i / BATCH + 1;
+      const batchStart = Date.now();
+      console.log(`[TEACHER-COURSES] batch=${batchIndex}/${totalBatches} start courses=${batch.map((b) => b.course.id).join(',')}`);
       const results = await Promise.all(
         batch.map(async ({ course, fetchedStudents }) => {
+          const upsertStart = Date.now();
           const gcCourse = await this.prisma.gcTeacherCourse.upsert({
             where: { teacherId_googleId: { teacherId: userId, googleId: course.id! } },
             create: {
@@ -282,14 +290,19 @@ export class ClassroomService {
               syncedAt: new Date(),
             },
           });
+          const upsertEnd = Date.now();
+          console.log(`[TEACHER-COURSES] batch=${batchIndex}/${totalBatches} upsert course=${course.id} ${upsertEnd - upsertStart} ms`);
           return { googleId: course.id!, id: gcCourse.id };
         }),
       );
+      const batchEnd = Date.now();
+      console.log(`[TEACHER-COURSES] batch=${batchIndex}/${totalBatches} end ${batchEnd - batchStart} ms (5 en paralelo)`);
       for (const r of results) {
         courseIdByGoogle.set(r.googleId, r.id);
       }
     }
     const t6 = Date.now();
+    console.log(`[TEACHER-COURSES] end total=${t6 - c0} ms`);
     console.log(`[TEACHER-SYNC] courses-db = ${t6 - t5} ms`);
 
     // 2. Roster de alumnos: createMany (nuevos) + updateMany (syncedAt / studentId)
