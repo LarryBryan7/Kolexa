@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const STUDENT_SCOPES = [
@@ -322,35 +323,42 @@ export class ClassroomService {
       });
     }
 
-    // 1d. Actualizar cursos existentes (paralelo en lotes de máximo BATCH=5).
-    //     $transaction con array ejecuta los updates SECUENCIALMENTE (1 BEGIN + N UPDATE
-    //     + 1 COMMIT), lo que encarece el bloque. En su lugar se lanzan los updates en
-    //     paralelo por lotes de 5 (patrón de batching del código original), respetando
-    //     el límite de conexiones (connection_limit=5).
-    for (let i = 0; i < existingCoursesData.length; i += BATCH) {
-      const batch = existingCoursesData.slice(i, i + BATCH);
-      await Promise.all(
-        batch.map((c) =>
-          this.prisma.gcTeacherCourse.update({
-            where: { teacherId_googleId: { teacherId: userId, googleId: c.googleId } },
-            data: {
-              name: c.name,
-              section: c.section,
-              studentCount: c.studentCount,
-              syncedAt: new Date(),
-            },
-          }),
-        ),
+    // 1d. Actualizar TODOS los cursos existentes en UNA sola operación con
+    //     `UPDATE ... FROM (VALUES ...)`. Se usa Prisma.sql/Prisma.join para generar
+    //     placeholders parametrizados: cada valor dinámico (userId, googleId, name,
+    //     section, studentCount) se pasa como parámetro bind, NUNCA interpolado en el
+    //     SQL → sin riesgo de SQL injection. La clave de matching es (teacherId, googleId),
+    //     que corresponde a la constraint @@unique([teacherId, googleId]).
+    if (existingCoursesData.length > 0) {
+      const valueRows = existingCoursesData.map((c) =>
+        Prisma.sql`(${userId}::bigint, ${c.googleId}::text, ${c.name}::text, ${c.section}::text, ${c.studentCount}::int)`,
       );
+      await this.prisma.$executeRaw`
+        UPDATE "gc_teacher_courses" AS t
+        SET "name" = v.name,
+            "section" = v.section,
+            "student_count" = v.student_count,
+            "synced_at" = NOW()
+        FROM (VALUES ${Prisma.join(valueRows)}) AS v(teacher_id, google_id, name, section, student_count)
+        WHERE t.teacher_id = v.teacher_id AND t.google_id = v.google_id
+      `;
     }
 
-    // 1e. Reconstruir Map googleId → id incluyendo los cursos nuevos (1 query)
-    const allCoursesAfter = await this.prisma.gcTeacherCourse.findMany({
-      where: { teacherId: userId },
-      select: { id: true, googleId: true },
-    });
-    courseIdByGoogle.clear();
-    for (const ac of allCoursesAfter) courseIdByGoogle.set(ac.googleId, ac.id);
+    // 1e. Reconstruir Map googleId → id. Los IDs de los cursos EXISTENTES ya están en
+    //     courseIdByGoogle (del findMany inicial 1a). Solo faltan los IDs de los cursos
+    //     NUEVOS insertados en 1c, por lo que:
+    //       - si NO hay cursos nuevos → NO se ejecuta ningún findMany final.
+    //       - si hay cursos nuevos → findMany acotado SOLO a esos googleId.
+    if (newCourses.length > 0) {
+      const newIds = await this.prisma.gcTeacherCourse.findMany({
+        where: {
+          teacherId: userId,
+          googleId: { in: newCourses.map(({ course }) => course.id!) },
+        },
+        select: { id: true, googleId: true },
+      });
+      for (const n of newIds) courseIdByGoogle.set(n.googleId, n.id);
+    }
 
     const t6 = Date.now();
     console.log(`[TEACHER-COURSES] end total=${t6 - c0} ms`);
