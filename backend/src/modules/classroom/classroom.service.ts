@@ -431,7 +431,7 @@ export class ClassroomService {
         //     parámetros bind (nunca interpolados) → sin riesgo de SQL injection.
         if (allNewStudents.length > 0) {
           const valueRows = allNewStudents.map((s) =>
-            Prisma.sql`(${s.courseId}::bigint, ${s.googleId}::text, ${s.fullName}::text, ${s.email}::text, ${s.photoUrl}::text, ${s.studentId}::bigint)`,
+            Prisma.sql`(${s.courseId}::bigint, ${s.googleId}::text, ${s.fullName}::text, ${s.email}::text, ${s.photoUrl}::text, NOW(), ${s.studentId}::bigint)`,
           );
           await this.prisma.$executeRaw`
             INSERT INTO "gc_course_students" (course_id, google_id, full_name, email, photo_url, synced_at, student_id)
