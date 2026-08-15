@@ -334,157 +334,172 @@ export class ClassroomService {
     console.log(`[TEACHER-COURSES] end total=${t6 - c0} ms`);
     console.log(`[TEACHER-SYNC] courses-db = ${t6 - t5} ms`);
 
-    // 2. Roster de alumnos (Fase 1 — reducción de round-trips).
-    //    Antes: por curso se ejecutaban createMany + updateMany(syncedAt) + findMany(pending)
-    //    → 9×(3+3+1) ≈ 63 round-trips. Ahora se fusionan en operaciones globales:
-    //    1 createMany (todos los alumnos) + 1 updateMany (syncedAt) + 1 findMany (pending)
-    //    + updates marginales de studentId. El studentId se resuelve con el Map precargado
-    //    (sin N+1) y se preserva la lógica de asignación por (courseId, googleId).
-    console.log('[TEACHER-ROSTER] start');
-    const r0 = Date.now();
-    let rTotalStudents = 0;
+    // 2 + 3. Roster y Submissions en paralelo (Promise.all).
+    //    Tras courses-db ya están disponibles todos los courseId locales (courseIdByGoogle).
+    //    Roster y Submissions son INDEPENDIENTES entre sí (cada uno solo lee courseIdByGoogle
+    //    y perCourse, y escribe en tablas distintas: gc_course_students vs gc_teacher_submissions),
+    //    por lo que se lanzan en paralelo con Promise.all para solapar sus round-trips.
+    //    Se preservan exactamente los logs y la lógica interna de cada bloque.
+    const [rosterResult, submissionsResult] = await Promise.all([
+      (async () => {
+        // 2. Roster de alumnos (Fase 1 — reducción de round-trips).
+        //    Antes: por curso se ejecutaban createMany + updateMany(syncedAt) + findMany(pending)
+        //    → 9×(3+3+1) ≈ 63 round-trips. Ahora se fusionan en operaciones globales:
+        //    1 createMany (todos los alumnos) + 1 updateMany (syncedAt) + 1 findMany (pending)
+        //    + updates marginales de studentId. El studentId se resuelve con el Map precargado
+        //    (sin N+1) y se preserva la lógica de asignación por (courseId, googleId).
+        console.log('[TEACHER-ROSTER] start');
+        const r0 = Date.now();
+        let rTotalStudents = 0;
 
-    // Datos globales del roster
-    const allNewStudents: {
-      courseId: bigint;
-      googleId: string;
-      fullName: string;
-      email: string | null;
-      photoUrl: string | null;
-      studentId: bigint | null;
-    }[] = [];
-    const allGoogleIds: string[] = [];
-    const allCourseIds: bigint[] = [];
-    // Map clave compuesta "courseId:googleId" -> studentId (preserva la lógica por curso)
-    const googleIdToStudentIdByCourse = new Map<string, bigint>();
+        // Datos globales del roster
+        const allNewStudents: {
+          courseId: bigint;
+          googleId: string;
+          fullName: string;
+          email: string | null;
+          photoUrl: string | null;
+          studentId: bigint | null;
+        }[] = [];
+        const allGoogleIds: string[] = [];
+        const allCourseIds: bigint[] = [];
+        // Map clave compuesta "courseId:googleId" -> studentId (preserva la lógica por curso)
+        const googleIdToStudentIdByCourse = new Map<string, bigint>();
 
-    for (const { course, fetchedStudents } of perCourse) {
-      const courseId = courseIdByGoogle.get(course.id!);
-      if (!courseId) continue;
-      allCourseIds.push(courseId);
-      console.log(`[TEACHER-ROSTER] course=${course.id} students=${fetchedStudents.length}`);
-      for (const s of fetchedStudents) {
-        const fullName: string = s.profile?.name?.fullName ?? '–';
-        const normalized = fullName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-        const matchedId = studentsByNormalizedName.get(normalized) ?? null;
-        allNewStudents.push({
-          courseId,
-          googleId: s.userId,
-          fullName,
-          email: s.profile?.emailAddress ?? null,
-          photoUrl: s.profile?.photoUrl ?? null,
-          studentId: matchedId,
-        });
-        allGoogleIds.push(s.userId);
-        if (matchedId) googleIdToStudentIdByCourse.set(`${courseId}:${s.userId}`, matchedId);
-      }
-      rTotalStudents += fetchedStudents.length;
-    }
+        for (const { course, fetchedStudents } of perCourse) {
+          const courseId = courseIdByGoogle.get(course.id!);
+          if (!courseId) continue;
+          allCourseIds.push(courseId);
+          console.log(`[TEACHER-ROSTER] course=${course.id} students=${fetchedStudents.length}`);
+          for (const s of fetchedStudents) {
+            const fullName: string = s.profile?.name?.fullName ?? '–';
+            const normalized = fullName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+            const matchedId = studentsByNormalizedName.get(normalized) ?? null;
+            allNewStudents.push({
+              courseId,
+              googleId: s.userId,
+              fullName,
+              email: s.profile?.emailAddress ?? null,
+              photoUrl: s.profile?.photoUrl ?? null,
+              studentId: matchedId,
+            });
+            allGoogleIds.push(s.userId);
+            if (matchedId) googleIdToStudentIdByCourse.set(`${courseId}:${s.userId}`, matchedId);
+          }
+          rTotalStudents += fetchedStudents.length;
+        }
 
-    // 2a. Insertar alumnos nuevos (1 query global; skipDuplicates respeta @@unique([courseId, googleId]))
-    if (allNewStudents.length > 0) {
-      await this.prisma.gcCourseStudent.createMany({
-        data: allNewStudents,
-        skipDuplicates: true,
-      });
-    }
-    const r1 = Date.now();
-    console.log(`[TEACHER-ROSTER] createMany=${r1 - r0} ms`);
+        // 2a. Insertar alumnos nuevos (1 query global; skipDuplicates respeta @@unique([courseId, googleId]))
+        if (allNewStudents.length > 0) {
+          await this.prisma.gcCourseStudent.createMany({
+            data: allNewStudents,
+            skipDuplicates: true,
+          });
+        }
+        const r1 = Date.now();
+        console.log(`[TEACHER-ROSTER] createMany=${r1 - r0} ms`);
 
-    // 2b. Refrescar syncedAt de los alumnos del roster actual (1 query global).
-    //     Se filtra por courseId IN + googleId IN para preservar exactamente el
-    //     comportamiento original (solo alumnos presentes en el roster actual).
-    if (allGoogleIds.length > 0 && allCourseIds.length > 0) {
-      await this.prisma.gcCourseStudent.updateMany({
-        where: { courseId: { in: allCourseIds }, googleId: { in: allGoogleIds } },
-        data: { syncedAt: new Date() },
-      });
-    }
-    const r2 = Date.now();
-    console.log(`[TEACHER-ROSTER] syncedAt=${r2 - r1} ms`);
-
-    // 2c. Asignar studentId solo a alumnos EXISTENTES con studentId=null que ahora
-    //     tienen match (caso marginal). Los alumnos NUEVOS ya llevan studentId en el
-    //     createMany, por lo que en el primer sync esta findMany devuelve [] y NO se
-    //     ejecuta ningún update por alumno (elimina el N+1 de ~10.9s).
-    if (googleIdToStudentIdByCourse.size > 0) {
-      const pending = await this.prisma.gcCourseStudent.findMany({
-        where: {
-          courseId: { in: allCourseIds },
-          googleId: { in: [...new Set(allGoogleIds)] },
-          studentId: null,
-        },
-        select: { courseId: true, googleId: true },
-      });
-      const r3 = Date.now();
-      console.log(`[TEACHER-ROSTER] pending=${r3 - r2} ms count=${pending.length}`);
-      for (const p of pending) {
-        const matchedId = googleIdToStudentIdByCourse.get(`${p.courseId}:${p.googleId}`);
-        if (matchedId) {
+        // 2b. Refrescar syncedAt de los alumnos del roster actual (1 query global).
+        //     Se filtra por courseId IN + googleId IN para preservar exactamente el
+        //     comportamiento original (solo alumnos presentes en el roster actual).
+        if (allGoogleIds.length > 0 && allCourseIds.length > 0) {
           await this.prisma.gcCourseStudent.updateMany({
-            where: { courseId: p.courseId, googleId: p.googleId, studentId: null },
-            data: { studentId: matchedId },
+            where: { courseId: { in: allCourseIds }, googleId: { in: allGoogleIds } },
+            data: { syncedAt: new Date() },
           });
         }
-      }
-      const r4 = Date.now();
-      console.log(`[TEACHER-ROSTER] studentId-updates=${r4 - r3} ms count=${pending.length}`);
-    } else {
-      console.log('[TEACHER-ROSTER] pending=0 ms count=0');
-    }
+        const r2 = Date.now();
+        console.log(`[TEACHER-ROSTER] syncedAt=${r2 - r1} ms`);
 
-    const t7 = Date.now();
-    console.log(`[TEACHER-SYNC] roster-db = ${t7 - t6} ms`);
-    console.log(`[TEACHER-ROSTER] total=${t7 - r0} ms totalStudents=${rTotalStudents}`);
-
-    // 3. Submissions: createMany (nuevos) + updateMany (syncedAt / state).
-    //    El filtro de Google ya es TURNED_IN, así que state es constante.
-    const allSubs: {
-      courseId: bigint;
-      courseworkGoogleId: string;
-      courseworkTitle: string;
-      studentGoogleId: string;
-      state: string;
-      submittedAt: Date | null;
-    }[] = [];
-    const subCourseIds = new Set<bigint>();
-    for (const { course, submissionsByCw } of perCourse) {
-      const courseId = courseIdByGoogle.get(course.id!);
-      if (!courseId) continue;
-      subCourseIds.add(courseId);
-      for (const { cw, subs } of submissionsByCw) {
-        for (const sub of subs) {
-          allSubs.push({
-            courseId,
-            courseworkGoogleId: cw.id!,
-            courseworkTitle: cw.title!,
-            studentGoogleId: sub.userId!,
-            state: sub.state ?? 'TURNED_IN',
-            submittedAt: sub.updateTime ? new Date(sub.updateTime) : null,
+        // 2c. Asignar studentId solo a alumnos EXISTENTES con studentId=null que ahora
+        //     tienen match (caso marginal). Los alumnos NUEVOS ya llevan studentId en el
+        //     createMany, por lo que en el primer sync esta findMany devuelve [] y NO se
+        //     ejecuta ningún update por alumno (elimina el N+1 de ~10.9s).
+        if (googleIdToStudentIdByCourse.size > 0) {
+          const pending = await this.prisma.gcCourseStudent.findMany({
+            where: {
+              courseId: { in: allCourseIds },
+              googleId: { in: [...new Set(allGoogleIds)] },
+              studentId: null,
+            },
+            select: { courseId: true, googleId: true },
           });
-          totalSubmissions++;
+          const r3 = Date.now();
+          console.log(`[TEACHER-ROSTER] pending=${r3 - r2} ms count=${pending.length}`);
+          for (const p of pending) {
+            const matchedId = googleIdToStudentIdByCourse.get(`${p.courseId}:${p.googleId}`);
+            if (matchedId) {
+              await this.prisma.gcCourseStudent.updateMany({
+                where: { courseId: p.courseId, googleId: p.googleId, studentId: null },
+                data: { studentId: matchedId },
+              });
+            }
+          }
+          const r4 = Date.now();
+          console.log(`[TEACHER-ROSTER] studentId-updates=${r4 - r3} ms count=${pending.length}`);
+        } else {
+          console.log('[TEACHER-ROSTER] pending=0 ms count=0');
         }
-      }
-    }
 
-    // Insertar submissions nuevas (skipDuplicates respeta @@unique([courseId, courseworkGoogleId, studentGoogleId]))
-    if (allSubs.length > 0) {
-      await this.prisma.gcTeacherSubmission.createMany({
-        data: allSubs,
-        skipDuplicates: true,
-      });
-    }
+        const t7 = Date.now();
+        console.log(`[TEACHER-SYNC] roster-db = ${t7 - t6} ms`);
+        console.log(`[TEACHER-ROSTER] total=${t7 - r0} ms totalStudents=${rTotalStudents}`);
+        return { t7 };
+      })(),
+      (async () => {
+        // 3. Submissions: createMany (nuevos) + updateMany (syncedAt / state).
+        //    El filtro de Google ya es TURNED_IN, así que state es constante.
+        const s0 = Date.now();
+        const allSubs: {
+          courseId: bigint;
+          courseworkGoogleId: string;
+          courseworkTitle: string;
+          studentGoogleId: string;
+          state: string;
+          submittedAt: Date | null;
+        }[] = [];
+        const subCourseIds = new Set<bigint>();
+        for (const { course, submissionsByCw } of perCourse) {
+          const courseId = courseIdByGoogle.get(course.id!);
+          if (!courseId) continue;
+          subCourseIds.add(courseId);
+          for (const { cw, subs } of submissionsByCw) {
+            for (const sub of subs) {
+              allSubs.push({
+                courseId,
+                courseworkGoogleId: cw.id!,
+                courseworkTitle: cw.title!,
+                studentGoogleId: sub.userId!,
+                state: sub.state ?? 'TURNED_IN',
+                submittedAt: sub.updateTime ? new Date(sub.updateTime) : null,
+              });
+              totalSubmissions++;
+            }
+          }
+        }
 
-    // Refrescar syncedAt de las submissions existentes (1 query, refresca TTL)
-    if (subCourseIds.size > 0) {
-      await this.prisma.gcTeacherSubmission.updateMany({
-        where: { courseId: { in: [...subCourseIds] } },
-        data: { syncedAt: new Date() },
-      });
-    }
-    const t8 = Date.now();
-    console.log(`[TEACHER-SYNC] submissions-db = ${t8 - t7} ms`);
-    console.log(`[TEACHER-SYNC] total = ${Date.now() - t0} ms`);
+        // Insertar submissions nuevas (skipDuplicates respeta @@unique([courseId, courseworkGoogleId, studentGoogleId]))
+        if (allSubs.length > 0) {
+          await this.prisma.gcTeacherSubmission.createMany({
+            data: allSubs,
+            skipDuplicates: true,
+          });
+        }
+
+        // Refrescar syncedAt de las submissions existentes (1 query, refresca TTL)
+        if (subCourseIds.size > 0) {
+          await this.prisma.gcTeacherSubmission.updateMany({
+            where: { courseId: { in: [...subCourseIds] } },
+            data: { syncedAt: new Date() },
+          });
+        }
+        const t8 = Date.now();
+        console.log(`[TEACHER-SYNC] submissions-db = ${t8 - s0} ms`);
+        return { t8 };
+      })(),
+    ]);
+    const t9 = Date.now();
+    console.log(`[TEACHER-SYNC] total = ${t9 - t0} ms`);
 
     return { courses: courses.length, submissions: totalSubmissions, cacheHit: false };
   }
