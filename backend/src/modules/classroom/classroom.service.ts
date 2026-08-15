@@ -157,17 +157,22 @@ export class ClassroomService {
     const t1 = Date.now();
     console.log(`[TEACHER-SYNC] cache-check = ${t1 - t0} ms`);
 
-    const auth = await this.getAuthClientForTeacher(userId);
+    // ── Optimización: auth + userRole en paralelo (independientes) ──
+    // auth (getAuthClientForTeacher) y userRole.findFirst no comparten datos ni
+    // dependencias: auth solo necesita el token de Google del docente, userRole solo
+    // lee schoolId. Se lanzan juntos con Promise.all para solapar sus round-trips.
+    // student.findMany NO se incluye aquí porque depende de schoolId (de userRole).
+    const [auth, teacherRole] = await Promise.all([
+      this.getAuthClientForTeacher(userId),
+      this.prisma.userRole.findFirst({
+        where: { userId },
+        select: { schoolId: true },
+      }),
+    ]);
     const t2 = Date.now();
-    console.log(`[TEACHER-SYNC] auth = ${t2 - t1} ms`);
+    console.log(`[TEACHER-SYNC] auth+userRole = ${t2 - t1} ms`);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const classroomApi = google.classroom({ version: 'v1', auth } as any) as any;
-
-    // Obtener schoolId del docente para el auto-match de alumnos
-    const teacherRole = await this.prisma.userRole.findFirst({
-      where: { userId },
-      select: { schoolId: true },
-    });
     const schoolId = teacherRole?.schoolId ?? null;
 
     // ── Optimización (N+1): precargar UNA sola vez los estudiantes del colegio ──
@@ -175,12 +180,15 @@ export class ClassroomService {
     // cada alumno del roster (N+1 → ~30 queries pesadas). Ahora se carga 1 vez en
     // un Map<normalizedName, id>. Solo se guardan nombres con EXACTAMENTE 1 match,
     // preservando la semántica original (matches.length === 1).
+    // student.findMany se ejecuta DESPUÉS de userRole porque necesita schoolId.
     const studentsByNormalizedName = new Map<string, bigint>();
     if (schoolId) {
       const allStudents = await this.prisma.student.findMany({
         where: { schoolId, isActive: true, deletedAt: null },
         select: { id: true, firstName: true, lastName: true },
       });
+      const t2b = Date.now();
+      console.log(`[TEACHER-SYNC] student.findMany = ${t2b - t2} ms`);
       const normalize = (s: string) =>
         s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
       const nameCount = new Map<string, number>();
@@ -193,6 +201,10 @@ export class ClassroomService {
       for (const [name, count] of nameCount) {
         if (count === 1) studentsByNormalizedName.set(name, nameToId.get(name)!);
       }
+      const t2c = Date.now();
+      console.log(`[TEACHER-SYNC] matching = ${t2c - t2b} ms`);
+    } else {
+      console.log('[TEACHER-SYNC] student.findMany = 0 ms (sin schoolId)');
     }
     const t3 = Date.now();
     console.log(`[TEACHER-SYNC] student-matching = ${t3 - t2} ms`);
