@@ -260,84 +260,110 @@ export class ClassroomService {
     const courseIdByGoogle = new Map<string, bigint>();
     const BATCH = 5;
 
-    // 1. Upsert de cursos en lotes de 5 (connection_limit=5), como syncStudent.
-    //    Devuelve el id local para construir las relaciones roster/submissions.
+    // 1. Upsert bulk de cursos (Fase 1 — reducción de round-trips).
+    //    Antes: 9 upserts individuales (cada uno = BEGIN + SELECT + INSERT/UPDATE + COMMIT).
+    //    Ahora: findMany (existentes) + createMany (nuevos) + $transaction (update existentes)
+    //    + findMany (IDs de los nuevos). Reduce de ~27 round-trips a ~6, preservando el id
+    //    local de cada curso (googleId → id) para construir las relaciones roster/submissions.
     console.log(`[TEACHER-COURSES] start courses=${perCourse.length} batchSize=${BATCH}`);
     const c0 = Date.now();
-    const totalBatches = Math.ceil(perCourse.length / BATCH);
-    console.log(`[TEACHER-COURSES] totalBatches=${totalBatches}`);
-    for (let i = 0; i < perCourse.length; i += BATCH) {
-      const batch = perCourse.slice(i, i + BATCH);
-      const batchIndex = i / BATCH + 1;
-      const batchStart = Date.now();
-      console.log(`[TEACHER-COURSES] batch=${batchIndex}/${totalBatches} start courses=${batch.map((b) => b.course.id).join(',')}`);
-      const results = await Promise.all(
-        batch.map(async ({ course, fetchedStudents }) => {
-          const upsertStart = Date.now();
-          const gcCourse = await this.prisma.gcTeacherCourse.upsert({
-            where: { teacherId_googleId: { teacherId: userId, googleId: course.id! } },
-            create: {
-              teacherId: userId,
-              googleId: course.id!,
-              name: course.name!,
-              section: course.section ?? null,
-              studentCount: fetchedStudents.length,
-            },
-            update: {
-              name: course.name!,
-              section: course.section ?? null,
-              studentCount: fetchedStudents.length,
+
+    // 1a. Cursos existentes del docente (1 query) → Map googleId → id local
+    const existingCourses = await this.prisma.gcTeacherCourse.findMany({
+      where: { teacherId: userId },
+      select: { id: true, googleId: true },
+    });
+    for (const ec of existingCourses) courseIdByGoogle.set(ec.googleId, ec.id);
+
+    // 1b. Separar cursos nuevos vs existentes
+    const newCourses = perCourse.filter(({ course }) => !courseIdByGoogle.has(course.id!));
+    const existingCoursesData = perCourse
+      .filter(({ course }) => courseIdByGoogle.has(course.id!))
+      .map(({ course, fetchedStudents }) => ({
+        googleId: course.id!,
+        name: course.name!,
+        section: course.section ?? null,
+        studentCount: fetchedStudents.length,
+      }));
+
+    // 1c. Insertar cursos nuevos (1 query; skipDuplicates respeta @@unique([teacherId, googleId]))
+    if (newCourses.length > 0) {
+      await this.prisma.gcTeacherCourse.createMany({
+        data: newCourses.map(({ course, fetchedStudents }) => ({
+          teacherId: userId,
+          googleId: course.id!,
+          name: course.name!,
+          section: course.section ?? null,
+          studentCount: fetchedStudents.length,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    // 1d. Actualizar cursos existentes (1 transacción: 1 BEGIN + N UPDATE + 1 COMMIT,
+    //     en lugar de N updates con transacción implícita cada uno)
+    if (existingCoursesData.length > 0) {
+      await this.prisma.$transaction(
+        existingCoursesData.map((c) =>
+          this.prisma.gcTeacherCourse.update({
+            where: { teacherId_googleId: { teacherId: userId, googleId: c.googleId } },
+            data: {
+              name: c.name,
+              section: c.section,
+              studentCount: c.studentCount,
               syncedAt: new Date(),
             },
-          });
-          const upsertEnd = Date.now();
-          console.log(`[TEACHER-COURSES] batch=${batchIndex}/${totalBatches} upsert course=${course.id} ${upsertEnd - upsertStart} ms`);
-          return { googleId: course.id!, id: gcCourse.id };
-        }),
+          }),
+        ),
       );
-      const batchEnd = Date.now();
-      console.log(`[TEACHER-COURSES] batch=${batchIndex}/${totalBatches} end ${batchEnd - batchStart} ms (5 en paralelo)`);
-      for (const r of results) {
-        courseIdByGoogle.set(r.googleId, r.id);
-      }
     }
+
+    // 1e. Reconstruir Map googleId → id incluyendo los cursos nuevos (1 query)
+    const allCoursesAfter = await this.prisma.gcTeacherCourse.findMany({
+      where: { teacherId: userId },
+      select: { id: true, googleId: true },
+    });
+    courseIdByGoogle.clear();
+    for (const ac of allCoursesAfter) courseIdByGoogle.set(ac.googleId, ac.id);
+
     const t6 = Date.now();
     console.log(`[TEACHER-COURSES] end total=${t6 - c0} ms`);
     console.log(`[TEACHER-SYNC] courses-db = ${t6 - t5} ms`);
 
-    // 2. Roster de alumnos: createMany (nuevos) + updateMany (syncedAt / studentId)
-    //    por curso. El studentId se resuelve con el Map precargado (sin N+1).
-    //    Paralelizado POR CURSOS en lotes de 5 (mismo patrón que los upserts de
-    //    cursos, connection_limit=5). Cada curso es independiente (courseId ya
-    //    resuelto en courseIdByGoogle; queries filtradas por su propio courseId).
+    // 2. Roster de alumnos (Fase 1 — reducción de round-trips).
+    //    Antes: por curso se ejecutaban createMany + updateMany(syncedAt) + findMany(pending)
+    //    → 9×(3+3+1) ≈ 63 round-trips. Ahora se fusionan en operaciones globales:
+    //    1 createMany (todos los alumnos) + 1 updateMany (syncedAt) + 1 findMany (pending)
+    //    + updates marginales de studentId. El studentId se resuelve con el Map precargado
+    //    (sin N+1) y se preserva la lógica de asignación por (courseId, googleId).
     console.log('[TEACHER-ROSTER] start');
     const r0 = Date.now();
     let rTotalStudents = 0;
 
-    const processCourse = async (course: any, fetchedStudents: any[]) => {
-      const rCourseStart = Date.now();
-      console.log(`[TEACHER-ROSTER] course=${course.id} students=${fetchedStudents.length}`);
+    // Datos globales del roster
+    const allNewStudents: {
+      courseId: bigint;
+      googleId: string;
+      fullName: string;
+      email: string | null;
+      photoUrl: string | null;
+      studentId: bigint | null;
+    }[] = [];
+    const allGoogleIds: string[] = [];
+    const allCourseIds: bigint[] = [];
+    // Map clave compuesta "courseId:googleId" -> studentId (preserva la lógica por curso)
+    const googleIdToStudentIdByCourse = new Map<string, bigint>();
+
+    for (const { course, fetchedStudents } of perCourse) {
       const courseId = courseIdByGoogle.get(course.id!);
-      if (!courseId) return 0;
-
-      const newStudents: {
-        courseId: bigint;
-        googleId: string;
-        fullName: string;
-        email: string | null;
-        photoUrl: string | null;
-        studentId: bigint | null;
-      }[] = [];
-      const existingGoogleIds: string[] = [];
-      // Map googleId -> studentId construido UNA vez por curso (evita
-      // fetchedStudents.find() repetido dentro del loop de updates marginales).
-      const googleIdToStudentId = new Map<string, bigint>();
-
+      if (!courseId) continue;
+      allCourseIds.push(courseId);
+      console.log(`[TEACHER-ROSTER] course=${course.id} students=${fetchedStudents.length}`);
       for (const s of fetchedStudents) {
         const fullName: string = s.profile?.name?.fullName ?? '–';
         const normalized = fullName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
         const matchedId = studentsByNormalizedName.get(normalized) ?? null;
-        newStudents.push({
+        allNewStudents.push({
           courseId,
           googleId: s.userId,
           fullName,
@@ -345,66 +371,64 @@ export class ClassroomService {
           photoUrl: s.profile?.photoUrl ?? null,
           studentId: matchedId,
         });
-        existingGoogleIds.push(s.userId);
-        if (matchedId) googleIdToStudentId.set(s.userId, matchedId);
+        allGoogleIds.push(s.userId);
+        if (matchedId) googleIdToStudentIdByCourse.set(`${courseId}:${s.userId}`, matchedId);
       }
-
-      // Insertar alumnos nuevos (skipDuplicates respeta @@unique([courseId, googleId]))
-      if (newStudents.length > 0) {
-        await this.prisma.gcCourseStudent.createMany({
-          data: newStudents,
-          skipDuplicates: true,
-        });
-      }
-      const r1 = Date.now();
-      console.log(`[TEACHER-ROSTER] createMany=${r1 - rCourseStart} ms`);
-
-      // Refrescar syncedAt de los alumnos existentes (1 query)
-      if (existingGoogleIds.length > 0) {
-        await this.prisma.gcCourseStudent.updateMany({
-          where: { courseId, googleId: { in: existingGoogleIds } },
-          data: { syncedAt: new Date() },
-        });
-      }
-      const r2 = Date.now();
-      console.log(`[TEACHER-ROSTER] syncedAt=${r2 - r1} ms`);
-
-      // Asignar studentId solo a alumnos EXISTENTES con studentId=null que ahora
-      // tienen match (caso marginal). Los alumnos NUEVOS ya llevan studentId en el
-      // createMany, por lo que en el primer sync esta findMany devuelve [] y NO se
-      // ejecuta ningún update por alumno (elimina el N+1 de ~10.9s).
-      if (googleIdToStudentId.size > 0) {
-        const pending = await this.prisma.gcCourseStudent.findMany({
-          where: { courseId, googleId: { in: [...googleIdToStudentId.keys()] }, studentId: null },
-          select: { googleId: true },
-        });
-        const r3 = Date.now();
-        console.log(`[TEACHER-ROSTER] pending=${r3 - r2} ms count=${pending.length}`);
-        for (const p of pending) {
-          const matchedId = googleIdToStudentId.get(p.googleId);
-          if (matchedId) {
-            await this.prisma.gcCourseStudent.updateMany({
-              where: { courseId, googleId: p.googleId, studentId: null },
-              data: { studentId: matchedId },
-            });
-          }
-        }
-        const r4 = Date.now();
-        console.log(`[TEACHER-ROSTER] studentId-updates=${r4 - r3} ms count=${pending.length}`);
-      } else {
-        console.log('[TEACHER-ROSTER] pending=0 ms count=0');
-      }
-
-      return fetchedStudents.length;
-    };
-
-    for (let i = 0; i < perCourse.length; i += BATCH) {
-      const batch = perCourse.slice(i, i + BATCH);
-      const counts = await Promise.all(
-        batch.map(({ course, fetchedStudents }) => processCourse(course, fetchedStudents)),
-      );
-      for (const c of counts) rTotalStudents += c;
+      rTotalStudents += fetchedStudents.length;
     }
+
+    // 2a. Insertar alumnos nuevos (1 query global; skipDuplicates respeta @@unique([courseId, googleId]))
+    if (allNewStudents.length > 0) {
+      await this.prisma.gcCourseStudent.createMany({
+        data: allNewStudents,
+        skipDuplicates: true,
+      });
+    }
+    const r1 = Date.now();
+    console.log(`[TEACHER-ROSTER] createMany=${r1 - r0} ms`);
+
+    // 2b. Refrescar syncedAt de los alumnos del roster actual (1 query global).
+    //     Se filtra por courseId IN + googleId IN para preservar exactamente el
+    //     comportamiento original (solo alumnos presentes en el roster actual).
+    if (allGoogleIds.length > 0 && allCourseIds.length > 0) {
+      await this.prisma.gcCourseStudent.updateMany({
+        where: { courseId: { in: allCourseIds }, googleId: { in: allGoogleIds } },
+        data: { syncedAt: new Date() },
+      });
+    }
+    const r2 = Date.now();
+    console.log(`[TEACHER-ROSTER] syncedAt=${r2 - r1} ms`);
+
+    // 2c. Asignar studentId solo a alumnos EXISTENTES con studentId=null que ahora
+    //     tienen match (caso marginal). Los alumnos NUEVOS ya llevan studentId en el
+    //     createMany, por lo que en el primer sync esta findMany devuelve [] y NO se
+    //     ejecuta ningún update por alumno (elimina el N+1 de ~10.9s).
+    if (googleIdToStudentIdByCourse.size > 0) {
+      const pending = await this.prisma.gcCourseStudent.findMany({
+        where: {
+          courseId: { in: allCourseIds },
+          googleId: { in: [...new Set(allGoogleIds)] },
+          studentId: null,
+        },
+        select: { courseId: true, googleId: true },
+      });
+      const r3 = Date.now();
+      console.log(`[TEACHER-ROSTER] pending=${r3 - r2} ms count=${pending.length}`);
+      for (const p of pending) {
+        const matchedId = googleIdToStudentIdByCourse.get(`${p.courseId}:${p.googleId}`);
+        if (matchedId) {
+          await this.prisma.gcCourseStudent.updateMany({
+            where: { courseId: p.courseId, googleId: p.googleId, studentId: null },
+            data: { studentId: matchedId },
+          });
+        }
+      }
+      const r4 = Date.now();
+      console.log(`[TEACHER-ROSTER] studentId-updates=${r4 - r3} ms count=${pending.length}`);
+    } else {
+      console.log('[TEACHER-ROSTER] pending=0 ms count=0');
+    }
+
     const t7 = Date.now();
     console.log(`[TEACHER-SYNC] roster-db = ${t7 - t6} ms`);
     console.log(`[TEACHER-ROSTER] total=${t7 - r0} ms totalStudents=${rTotalStudents}`);
