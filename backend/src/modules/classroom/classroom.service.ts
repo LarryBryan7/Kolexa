@@ -294,7 +294,13 @@ export class ClassroomService {
 
     // 2. Roster de alumnos: createMany (nuevos) + updateMany (syncedAt / studentId)
     //    por curso. El studentId se resuelve con el Map precargado (sin N+1).
+    console.log('[TEACHER-ROSTER] start');
+    const r0 = Date.now();
+    let rTotalStudents = 0;
     for (const { course, fetchedStudents } of perCourse) {
+      const rCourseStart = Date.now();
+      rTotalStudents += fetchedStudents.length;
+      console.log(`[TEACHER-ROSTER] course=${course.id} students=${fetchedStudents.length}`);
       const courseId = courseIdByGoogle.get(course.id!);
       if (!courseId) continue;
 
@@ -334,6 +340,8 @@ export class ClassroomService {
           skipDuplicates: true,
         });
       }
+      const r1 = Date.now();
+      console.log(`[TEACHER-ROSTER] createMany=${r1 - rCourseStart} ms`);
 
       // Refrescar syncedAt de los alumnos existentes (1 query)
       if (existingGoogleIds.length > 0) {
@@ -342,6 +350,8 @@ export class ClassroomService {
           data: { syncedAt: new Date() },
         });
       }
+      const r2 = Date.now();
+      console.log(`[TEACHER-ROSTER] syncedAt=${r2 - r1} ms`);
 
       // Asignar studentId solo a alumnos EXISTENTES con studentId=null que ahora
       // tienen match (caso marginal). Los alumnos NUEVOS ya llevan studentId en el
@@ -352,6 +362,8 @@ export class ClassroomService {
           where: { courseId, googleId: { in: [...googleIdToStudentId.keys()] }, studentId: null },
           select: { googleId: true },
         });
+        const r3 = Date.now();
+        console.log(`[TEACHER-ROSTER] pending=${r3 - r2} ms count=${pending.length}`);
         for (const p of pending) {
           const matchedId = googleIdToStudentId.get(p.googleId);
           if (matchedId) {
@@ -361,10 +373,15 @@ export class ClassroomService {
             });
           }
         }
+        const r4 = Date.now();
+        console.log(`[TEACHER-ROSTER] studentId-updates=${r4 - r3} ms count=${pending.length}`);
+      } else {
+        console.log('[TEACHER-ROSTER] pending=0 ms count=0');
       }
     }
     const t7 = Date.now();
     console.log(`[TEACHER-SYNC] roster-db = ${t7 - t6} ms`);
+    console.log(`[TEACHER-ROSTER] total=${t7 - r0} ms totalStudents=${rTotalStudents}`);
 
     // 3. Submissions: createMany (nuevos) + updateMany (syncedAt / state).
     //    El filtro de Google ya es TURNED_IN, así que state es constante.
