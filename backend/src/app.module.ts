@@ -48,6 +48,10 @@ import { InvitationsModule } from './modules/invitations/invitations.module';
 // ── Notificaciones push ───────────────────────────────────
 import { NotificationsModule } from './modules/notifications/notifications.module';
 
+// ── Web Admin ─────────────────────────────────────────────
+import { AdminModule } from './modules/admin/admin.module';
+import { ImportModule } from './modules/import/import.module';
+
 @Module({
   imports: [
     // Variables de entorno disponibles en toda la app
@@ -86,6 +90,10 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 
     // ── Push notifications (global) ───────────────────────────
     NotificationsModule,   // Firebase Admin SDK — envío a padres
+
+    // ── Web Admin ─────────────────────────────────────────────
+    AdminModule,           // CRUD de administración (solo school_admin)
+    ImportModule,          // Importación masiva (modo seguro: preview + confirm)
   ],
 })
 export class AppModule {}
