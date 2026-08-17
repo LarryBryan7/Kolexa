@@ -1,0 +1,23 @@
+import { cn } from '@/lib/utils';
+
+interface KolexaLogoProps {
+  className?: string;
+}
+
+/**
+ * Logo "K-bold-union" de Kolexa.
+ * Path vectorial real extraído de Figma (id 1054:593, viewBox 29×37).
+ * Es una "K" con terminaciones redondeadas.
+ */
+export function KolexaLogo({ className }: KolexaLogoProps) {
+  return (
+    <svg
+      viewBox="0 0 29 37"
+      className={cn('h-9 w-9', className)}
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M4.16797 0C6.46971 0.000104624 8.33594 1.8662 8.33594 4.16797V13.6514L10.4492 15.249L22.582 6.07617C24.142 4.8968 26.5659 5.02261 27.9961 6.35645C29.4261 7.69034 29.3206 9.72776 27.7607 10.9072L16.2334 19.623L22.582 24.4238C24.1417 25.6034 24.2465 27.6408 22.8164 28.9746C21.3861 30.3081 18.9622 30.4333 17.4023 29.2539L9.79492 23.501C9.30213 23.5164 8.80614 23.4513 8.33594 23.3086V32.832C8.33594 35.1338 6.46971 36.9999 4.16797 37C1.86613 37 0 35.1339 0 32.832V4.16797C0 1.86613 1.86613 0 4.16797 0Z" />
+    </svg>
+  );
+}
