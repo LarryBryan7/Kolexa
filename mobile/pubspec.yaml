@@ -78,6 +78,11 @@ dependencies:
   # url_launcher: abre la URL de OAuth de Google en el navegador del sistema.
   url_launcher: ^6.2.0
 
+  # ── Google Sign-In (Fase 1) ─────────────────────────────
+  # google_sign_in: inicio de sesión/registro de padres con cuenta Google.
+  # Obtiene el ID Token que el backend valida criptográficamente.
+  google_sign_in: ^6.2.1
+
   # ── Cámara y galería ─────────────────────────────────────
   # image_picker: accede a cámara y galería del dispositivo.
   image_picker: ^1.1.2

@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../datasources/auth_remote_datasource.dart';
 import '../models/user_model.dart';
 import '../../../../core/api/interceptors/auth_interceptor.dart';
+import '../../../../core/services/google_sign_in_service.dart';
 
 // Usa SharedPreferences (sin Keystore de Android) para arranque instantáneo.
 // flutter_secure_storage inicializa el Keystore en la primera lectura, lo que
@@ -39,6 +40,27 @@ class AuthRepository {
     return loginResponse.user;
   }
 
+  // ── loginWithGoogle ───────────────────────────────────────
+  // Inicio de sesión/registro con Google Sign-In (Fase 1).
+  // Recibe el ID Token de Google, lo envía al backend y guarda la sesión.
+  Future<UserModel> loginWithGoogle({
+    required String idToken,
+    String? firebaseToken,
+  }) async {
+    final loginResponse = await _remoteDataSource.loginWithGoogle(
+      idToken: idToken,
+      firebaseToken: firebaseToken,
+    );
+
+    AuthInterceptor.setCache(
+      accessToken: loginResponse.accessToken,
+      refreshToken: loginResponse.refreshToken,
+    );
+    await _saveSession(loginResponse.accessToken, loginResponse.refreshToken, loginResponse.user);
+
+    return loginResponse.user;
+  }
+
   Future<void> logout() async {
     try {
       await _remoteDataSource.logout();
@@ -46,6 +68,11 @@ class AuthRepository {
     finally {
       AuthInterceptor.clearCache();
       await _clearLocalData();
+      // Cerrar la sesión de Google en el dispositivo para que el próximo
+      // login vuelva a mostrar el selector de cuentas.
+      try {
+        await GoogleSignInService.instance.signOut();
+      } catch (_) {}
     }
   }
 

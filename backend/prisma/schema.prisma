@@ -159,6 +159,12 @@ model Role {
 model User {
   id                  BigInt    @id @default(autoincrement())
   email               String    @unique @db.VarChar(128)
+  // googleSub: identificador único de la cuenta Google (sub del ID Token).
+  //   - nullable: los usuarios con email/password no tienen Google.
+  //   - unique: una cuenta Google = un User.
+  //   - asignado EXCLUSIVAMENTE por el backend tras validar el ID Token.
+  //   - NUNCA se acepta como dato confiado desde el cliente.
+  googleSub           String?   @unique @map("google_sub") @db.VarChar(64)
   passwordHash        String    @map("password_hash")
   // firstName / lastName en lugar de names / lastNames
   firstName           String    @map("first_name") @db.VarChar(255)

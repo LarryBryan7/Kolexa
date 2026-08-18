@@ -7,6 +7,7 @@ import '../bloc/auth_state.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/widgets/kolexa_logo.dart';
 import '../../../core/services/push_notifications_service.dart';
+import '../../../core/services/google_sign_in_service.dart';
 
 // ── Paleta del frame "04 — Login v2 (paleta ajustada)" ───
 const _kBg       = Color(0xFFF7F6F3);
@@ -48,6 +49,36 @@ class _LoginPageState extends State<LoginPage> {
         firebaseToken: PushNotificationsService.instance.fcmToken,
       ),
     );
+  }
+
+  // ── Continuar con Google ─────────────────────────────────
+  // Obtiene el ID Token de Google y lo envía al backend.
+  // El backend lo valida criptográficamente y crea/asigna el rol parent.
+  Future<void> _onGoogleLoginPressed() async {
+    FocusScope.of(context).unfocus();
+    try {
+      final idToken = await GoogleSignInService.instance.signIn();
+      if (!mounted) return;
+      context.read<AuthBloc>().add(
+        GoogleLoginEvent(
+          idToken: idToken,
+          firebaseToken: PushNotificationsService.instance.fcmToken,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      // Si el usuario canceló, no mostramos error (es una acción esperada).
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      if (msg.toLowerCase().contains('cancelado')) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          content: Text(msg),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ));
+    }
   }
 
   InputDecoration _fieldDecoration({
@@ -259,6 +290,49 @@ class _LoginPageState extends State<LoginPage> {
                                   fontSize: 14,
                                 ),
                               ),
+                      ),
+                    ),
+
+                    // ── Separador "o" ─────────────────────────
+                    const SizedBox(height: 18),
+                    const Row(
+                      children: [
+                        Expanded(child: Divider(color: _kBorder)),
+                        Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            'o',
+                            style: TextStyle(color: _kTextGray, fontSize: 12.5),
+                          ),
+                        ),
+                        Expanded(child: Divider(color: _kBorder)),
+                      ],
+                    ),
+
+                    // ── Continuar con Google ──────────────────
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: _kTextDark,
+                          side: const BorderSide(color: _kBorder),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                        ),
+                        onPressed: isLoading ? null : _onGoogleLoginPressed,
+                        icon: const Icon(Icons.g_mobiledata, color: _kPrimary, size: 24),
+                        label: const Text(
+                          'Continuar con Google',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
                       ),
                     ),
 
