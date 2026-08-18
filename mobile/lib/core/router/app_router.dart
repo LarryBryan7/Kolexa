@@ -26,12 +26,12 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/bloc/auth_bloc.dart';
 import '../../features/auth/bloc/auth_state.dart';
 import '../../features/auth/ui/login_page.dart';
-import '../../features/home/ui/home_page.dart';
 import '../../features/home/ui/home_v2_page.dart';
 import '../../features/home/ui/home_docente_page.dart';
 import '../../features/home/ui/home_director_page.dart';
 import '../../features/onboarding/ui/welcome_page.dart';
 import '../../features/onboarding/ui/role_selection_page.dart';
+import '../services/onboarding_service.dart';
 import '../../features/classroom/ui/classroom_page.dart';
 import '../../features/classroom/bloc/classroom_bloc.dart';
 import '../../features/home/ui/esta_semana_page.dart';
@@ -68,8 +68,15 @@ class AppRouter {
     // que go_router puede escuchar para re-evaluar las redirecciones
     final refreshStream = _GoRouterRefreshStream(authBloc.stream);
 
+    // Punto de entrada según el estado del onboarding:
+    //   - Primera vez (no completado) → welcome (flujo de bienvenida)
+    //   - Ya completado → login directo (el usuario "ya creó su cuenta")
+    // OnboardingService se inicializa en main() antes de runApp, por lo
+    // que `isCompleted` es síncrono y seguro de leer aquí.
+    final initialLocation = OnboardingService.instance.isCompleted ? login : welcome;
+
     _router = GoRouter(
-      initialLocation: login,
+      initialLocation: initialLocation,
 
       // refreshListenable: go_router re-evalúa el redirect cada vez
       // que el BLoC emite un nuevo estado.

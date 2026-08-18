@@ -102,8 +102,10 @@ class _HomeDocentePageState extends State<HomeDocentePage>
       setState(() {
         _homeDataFuture = repo.getHomeData();
         _classroomStatusFuture = _homeDataFuture.then((d) => d.connected);
-        // Si hubo cache hit, no re-lanzar courses/pending/schedule (Mejora C).
-        if (!cacheHit) {
+        // Solo re-lanzar courses/pending/schedule si el docente está conectado
+        // Y no hubo cache hit. Si no está conectado, los datos de initState ya
+        // son válidos (no hay nada nuevo que sincronizar) → evita duplicados.
+        if (home.connected && !cacheHit) {
           _coursesFuture = repo.getCourses();
           _pendingFuture = repo.getPendingCount();
           _scheduleFuture = repo.getTodaySchedule();
@@ -175,8 +177,9 @@ class _HomeDocentePageState extends State<HomeDocentePage>
       setState(() {
         _homeDataFuture = repo.getHomeData();
         _classroomStatusFuture = _homeDataFuture.then((d) => d.connected);
-        // Si hubo cache hit, no re-lanzar courses/pending/schedule (Mejora C).
-        if (!cacheHit) {
+        // Solo re-lanzar courses/pending/schedule si el docente está conectado
+        // Y no hubo cache hit (evita duplicados cuando no está conectado).
+        if (home.connected && !cacheHit) {
           _coursesFuture = repo.getCourses();
           _pendingFuture = repo.getPendingCount();
           _scheduleFuture = repo.getTodaySchedule();
@@ -225,11 +228,14 @@ class _HomeDocentePageState extends State<HomeDocentePage>
       } catch (_) {}
       if (!mounted) return;
       // Fuente única de `connected`: getHomeData (Mejora A). Sin doble /status.
+      final home = await repo.getHomeData();
+      if (!mounted) return;
       setState(() {
-        _homeDataFuture = repo.getHomeData();
-        _classroomStatusFuture = _homeDataFuture.then((d) => d.connected);
-        // Si hubo cache hit, no re-lanzar courses/pending (Mejora C).
-        if (!cacheHit) {
+        _homeDataFuture = Future.value(home);
+        _classroomStatusFuture = Future.value(home.connected);
+        // Solo re-lanzar courses/pending si el docente está conectado Y no hubo
+        // cache hit (evita duplicados cuando no está conectado).
+        if (home.connected && !cacheHit) {
           _coursesFuture = repo.getCourses();
           _pendingFuture = repo.getPendingCount();
         }

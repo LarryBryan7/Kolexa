@@ -8,6 +8,9 @@
 // ============================================================
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import '../../../core/router/app_router.dart';
+import '../../../core/services/onboarding_service.dart';
 import '../../../core/theme/app_theme.dart';
 import 'widgets/onboarding_page_dots.dart';
 
@@ -103,8 +106,13 @@ class _RoleSelectionPageState extends State<RoleSelectionPage> {
                           borderRadius: BorderRadius.circular(30),
                         ),
                       ),
-                      onPressed: () {
-                        // TODO Fase 2: continuar con el registro según _selected
+                      onPressed: () async {
+                        // El usuario completó el onboarding (seleccionó su rol).
+                        // Marcamos el flujo como completado para que en el
+                        // próximo arranque la app vaya directo al login.
+                        await OnboardingService.instance.complete();
+                        // "Ya creó su cuenta" → ir al login.
+                        if (context.mounted) context.go(AppRouter.login);
                       },
                       child: const Text(
                         'Continuar',
