@@ -45,6 +45,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     // recibe ese tipo de evento.
     on<CheckAuthEvent>(_onCheckAuth);
     on<LoginEvent>(_onLogin);
+    on<GoogleLoginEvent>(_onGoogleLogin);
     on<LogoutEvent>(_onLogout);
     on<ChangePasswordEvent>(_onChangePassword);
   }
@@ -107,6 +108,27 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     } catch (e) {
       // 4. Login fallido → emitir error con mensaje legible
       // e.toString() incluye el mensaje que pusimos en _handleError() del ApiClient
+      emit(AuthError(e.toString().replaceFirst('Exception: ', '')));
+    }
+  }
+
+  // ── _onGoogleLogin ────────────────────────────────────────
+  // Se ejecuta cuando el usuario presiona "Continuar con Google".
+  // Envía el ID Token al backend, guarda la sesión y navega a Home.
+  Future<void> _onGoogleLogin(
+    GoogleLoginEvent event,
+    Emitter<AuthState> emit,
+  ) async {
+    emit(const AuthLoading());
+
+    try {
+      final user = await _repository.loginWithGoogle(
+        idToken: event.idToken,
+        firebaseToken: event.firebaseToken,
+      );
+
+      emit(AuthAuthenticated(user));
+    } catch (e) {
       emit(AuthError(e.toString().replaceFirst('Exception: ', '')));
     }
   }

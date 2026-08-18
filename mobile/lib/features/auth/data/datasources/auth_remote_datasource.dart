@@ -66,6 +66,34 @@ class AuthRemoteDataSource {
     return LoginResponse.fromJson(response.data as Map<String, dynamic>);
   }
 
+  // ── loginWithGoogle ───────────────────────────────────────
+  // Inicio de sesión/registro con Google Sign-In (Fase 1).
+  //
+  // Envía ÚNICAMENTE el ID Token de Google al backend. El backend lo
+  // valida criptográficamente (firma, issuer, audience, expiración) y
+  // crea/asigna el rol parent si es una cuenta nueva.
+  //
+  // Parámetros:
+  //   idToken       → ID Token de Google (JWT firmado por Google)
+  //   firebaseToken → token FCM para push notifications (opcional)
+  //
+  // Devuelve: LoginResponse con user + accessToken + refreshToken
+  //           (misma estructura que login)
+  Future<LoginResponse> loginWithGoogle({
+    required String idToken,
+    String? firebaseToken,
+  }) async {
+    final body = {
+      'idToken': idToken,
+      if (firebaseToken != null) 'firebaseToken': firebaseToken,
+    };
+
+    // POST /auth/google → devuelve {user, accessToken, refreshToken}
+    final response = await _client.post('auth/google', data: body);
+
+    return LoginResponse.fromJson(response.data as Map<String, dynamic>);
+  }
+
   // ── logout ────────────────────────────────────────────────
   // Notifica al backend que el usuario cerró sesión.
   // El backend elimina el Firebase token para dejar de enviar

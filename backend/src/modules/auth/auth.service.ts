@@ -25,10 +25,13 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
+import { OAuth2Client } from 'google-auth-library';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RegisterWithTokenDto } from './dto/register.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
 
 @Injectable()
 export class AuthService {
@@ -118,6 +121,174 @@ export class AuthService {
       needsPasswordChange: user.needsPasswordChange,
       user: {
         id: user.id.toString(), // BigInt no se serializa en JSON → convertir a string
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        avatar: user.avatar,
+        roles: rolesData.map((ur) => ({
+          role: ur.roleName,
+          schoolId: ur.schoolId?.toString(),
+          schoolName: ur.schoolName,
+        })),
+        children,
+      },
+    };
+  }
+
+  // ── LOGIN CON GOOGLE (FASE 1) ──────────────────────────
+  // Inicio de sesión/registro de padres mediante Google Sign-In.
+  //
+  // SEGURIDAD (Fase 1):
+  //   - El backend valida criptográficamente el ID Token con Google
+  //     (firma, issuer, audience/client_id, expiración, sub, email verificado).
+  //   - La fuente de verdad es el token validado, NO los campos del cliente.
+  //   - googleSub se asigna EXCLUSIVAMENTE aquí, tras validar el token.
+  //   - No se implementa vinculación institucional (email/DNI → Parent,
+  //     ParentStudent, UserStudent, schoolId). Eso es Fase 2.
+  //   - El usuario se crea con un passwordHash aleatorio (imposible de conocer),
+  //     por lo que el login por email/password es imposible para cuentas Google.
+  async loginWithGoogle(dto: GoogleLoginDto) {
+    // 1. Validar el ID Token con Google.
+    //    OAuth2Client.verifyIdToken() verifica: firma, issuer (accounts.google.com),
+    //    audience (GOOGLE_CLIENT_ID) y expiración. Devuelve el payload decodificado.
+    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    if (!clientId) {
+      throw new UnauthorizedException('Google Sign-In no está configurado');
+    }
+
+    const client = new OAuth2Client(clientId);
+    let payload: any;
+    try {
+      const ticket = await client.verifyIdToken({
+        idToken: dto.idToken,
+        audience: clientId,
+      });
+      payload = ticket.getPayload();
+    } catch (err) {
+      // Token inválido, expirado o con audience incorrecto.
+      throw new UnauthorizedException('El ID Token de Google es inválido o ha expirado');
+    }
+
+    if (!payload || !payload.sub || !payload.email) {
+      throw new UnauthorizedException('El ID Token de Google no contiene datos válidos');
+    }
+
+    // 2. Buscar el usuario por googleSub.
+    const existing = await this.prisma.user.findUnique({
+      where: { googleSub: payload.sub },
+      select: {
+        id: true, email: true, firstName: true, lastName: true, avatar: true,
+        needsPasswordChange: true, isActive: true, deletedAt: true,
+      },
+    });
+
+    let user;
+    if (existing) {
+      // Cuenta Google ya registrada.
+      if (!existing.isActive || existing.deletedAt) {
+        throw new UnauthorizedException('La cuenta está inactiva o ha sido eliminada');
+      }
+      user = existing;
+    } else {
+      // 3. Cuenta nueva: crear el User con los datos del token validado.
+      //    passwordHash = hash de una cadena aleatoria → login por password imposible.
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const passwordHash = await bcrypt.hash(randomPassword, 10);
+
+      // Buscar el rol 'parent' (dato de referencia).
+      const parentRole = await this.prisma.role.findUnique({
+        where: { name: 'parent' },
+        select: { id: true },
+      });
+      if (!parentRole) {
+        throw new UnauthorizedException('El rol de padre no está configurado');
+      }
+
+      // Crear usuario + rol parent (schoolId null: sin vinculación institucional en Fase 1).
+      try {
+        user = await this.prisma.$transaction(async (tx) => {
+          const created = await tx.user.create({
+            data: {
+              email: payload.email,
+              passwordHash,
+              firstName: payload.given_name ?? '',
+              lastName: payload.family_name ?? '',
+              avatar: payload.picture ?? null,
+              googleSub: payload.sub,
+              isActive: true,
+            },
+          });
+
+          await tx.userRole.create({
+            data: { userId: created.id, roleId: parentRole.id, schoolId: null },
+          });
+
+          return created;
+        });
+      } catch (err: any) {
+        // P2002 = violación de unicidad. Ocurre si ya existe un User con el
+        // mismo email (registrado por email/password) pero sin googleSub.
+        // La vinculación de cuentas (unir Google con la cuenta existente) es
+        // parte de la Fase 2; en Fase 1 devolvemos un error claro.
+        if (err?.code === 'P2002') {
+          throw new ConflictException(
+            'Ya existe una cuenta con este correo. Inicia sesión con tu correo y contraseña.',
+          );
+        }
+        throw err;
+      }
+    }
+
+    // 4. Cargar roles + students (mismo mecanismo que login).
+    const [rolesData, studentsData] = await Promise.all([
+      this._loadRolesForLogin(user.id),
+      this._loadStudentsForLogin(user.id),
+    ]);
+
+    const roles = rolesData
+      .map((r) => r.roleName)
+      .filter((n): n is string => n !== null && n !== undefined);
+    const schoolId = rolesData[0]?.schoolId ?? null;
+
+    // 5. Generar tokens + guardar push token (en paralelo, igual que login).
+    const [tokens] = await Promise.all([
+      this.generateTokens(user, roles, schoolId),
+      (async () => {
+        if (dto.firebaseToken) {
+          try {
+            await this.savePushToken(user.id, dto.firebaseToken);
+          } catch (err) {
+            console.error('[AUTH-GOOGLE] Error al guardar push token:', err);
+          }
+        }
+      })(),
+    ]);
+
+    // 6. Cargar hijos si es padre (misma estructura que login).
+    const isParent = rolesData.some((r) => r.roleName === 'parent');
+    let children: {
+      id: string; firstName: string; lastName: string; code: string;
+      birthday: string | null; section: string | null; avatarUrl: string | null;
+    }[] = [];
+    if (isParent) {
+      children = studentsData.map((l) => ({
+        id: l.student.id.toString(),
+        firstName: l.student.firstName,
+        lastName: l.student.lastName,
+        code: l.student.code ?? '',
+        birthday: l.student.birthday ? l.student.birthday.toISOString().split('T')[0] : null,
+        section: l.student.enrollments[0]?.classroom?.name ?? null,
+        avatarUrl: l.student.avatar ?? null,
+      }));
+    }
+
+    // 7. Devolver la misma estructura de respuesta que login.
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      needsPasswordChange: user.needsPasswordChange ?? false,
+      user: {
+        id: user.id.toString(),
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
