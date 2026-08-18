@@ -1,0 +1,4 @@
+nombre,apellido,dni,codigo,aula,año,emailpadre
+María,García,87654321,AL-001,1° A,2026,padre@correo.com
+Luis,Torres,76543210,AL-002,2° B,2026,madre@correo.com
+Ana,Quispe,65432109,AL-003,3° C,2026,apoderado@correo.com
