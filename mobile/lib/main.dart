@@ -10,6 +10,7 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'core/services/push_notifications_service.dart';
+import 'core/services/onboarding_service.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/router/app_router.dart';
@@ -29,6 +30,10 @@ void main() async {
   // Firebase DEBE inicializarse antes de runApp: muchos widgets lo usan
   // en el primer frame (auth, home, banner de notificaciones).
   await Firebase.initializeApp();
+  // OnboardingService cachea SharedPreferences ANTES de runApp para que
+  // el router pueda decidir el initialLocation (welcome vs login) de forma
+  // síncrona en el primer build.
+  await OnboardingService.instance.initialize();
   runApp(const KolexaApp());
 
   // Push notifications se inicializa en background, SIN bloquear el primer
