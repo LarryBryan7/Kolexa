@@ -98,6 +98,7 @@ model School {
   notifications     Notification[]
   userRoles         UserRole[]
   invitations       SchoolInvitation[]
+  parents           Parent[]
 
   @@map("schools")
 }
@@ -212,6 +213,9 @@ model User {
   gcAttendanceSessions        GcAttendanceSession[]   @relation("GcAttendanceTeacher")
   pushTokens                  PushToken[]
   invitationsSent             SchoolInvitation[]      @relation("InvitationSender")
+  // parentProfiles: un User (cuenta) puede ser padre/apoderado en uno o varios
+  // colegios, por lo que puede tener múltiples perfiles institucionales Parent.
+  parentProfiles              Parent[]
 
   @@map("users")
 }
@@ -283,6 +287,7 @@ model Student {
   googleToken        GoogleToken?
   gcCourses          GcCourse[]
   gcCourseStudents   GcCourseStudent[]   @relation("GcCourseStudentLink")
+  parentLinks        ParentStudent[]
 
   @@map("students")
 }
@@ -1324,4 +1329,80 @@ model GcStudentSubmission {
   @@unique([courseworkId, googleId])
   @@index([courseworkId, submissionState, assignedGrade])
   @@map("gc_student_submissions")
+}
+
+// ============================================================
+// SECCIÓN: PADRES / APODERADOS (información institucional)
+// ============================================================
+// Parent representa la información INSTITUCIONAL del padre/apoderado,
+// separada de la cuenta de autenticación (User). Un Parent puede existir
+// ANTES de que el padre cree su cuenta desde la app móvil.
+//   - userId (opcional): se rellena cuando el padre se registra/vincula su cuenta.
+//   - La relación con alumnos es muchos-a-muchos vía ParentStudent.
+//   - La Web Admin gestiona esta información SIN crear cuentas ni contraseñas.
+//   - Un User (cuenta) puede tener varios Parent (uno por colegio).
+//
+// ── SEGURIDAD FUTURA — VINCULACIÓN DE CUENTA (NO implementada todavía) ──
+// El endpoint de vinculación desde la app deberá hacer, EN UNA TRANSACCIÓN:
+//   1. Registro/activación del padre (crear/activar su User y rol 'parent').
+//   2. Autenticación/verificación de identidad (token/invitación/código de
+//      activación). NUNCA bastará con conocer un DNI o email para reclamar un Parent.
+//   3. Localizar el Parent inequívocamente mediante (schoolId, dni).
+//   4. Verificar que el usuario realmente tiene derecho a reclamar ese Parent.
+//   5. Asignar Parent.userId.
+//   6. Cambiar linkStatus a 'linked'.
+//   7. Crear los UserStudent correspondientes (para que el login actual cargue
+//      los hijos vía UserStudent).
+// ⚠️ NUNCA permitir vinculación únicamente porque el usuario conoce un DNI o email.
+// ============================================================
+
+model Parent {
+  id           BigInt   @id @default(autoincrement())
+  schoolId     BigInt   @map("school_id")
+  // userId opcional: se vincula cuando el padre crea/activa su cuenta desde la app.
+  // NO es único: un User (cuenta) puede ser padre en varios colegios, por lo que
+  // puede tener varios perfiles Parent (uno por colegio).
+  // Invariante de consistencia (garantizada por el backend, no por CHECK SQL):
+  //   - userId = null  → linkStatus NUNCA puede ser 'linked' (debe ser 'pending' o 'unlinked')
+  //   - userId != null → linkStatus DEBE ser 'linked'
+  //   - linkStatus = 'unlinked' → userId = null
+  userId       BigInt?  @map("user_id")
+  firstName    String   @map("first_name") @db.VarChar(255)
+  lastName     String?  @map("last_name") @db.VarChar(255)
+  dni          String?  @db.VarChar(20)
+  phone        String?  @db.VarChar(20)
+  email        String?  @db.VarChar(128)
+  // Estado de vinculación de la cuenta (pending / linked / unlinked).
+  // Valores validados a nivel de servicio/DTO (no hay CHECK SQL).
+  linkStatus   String   @default("pending") @map("link_status") @db.VarChar(20)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  school  School          @relation(fields: [schoolId], references: [id])
+  user    User?           @relation(fields: [userId], references: [id])
+  students ParentStudent[]
+
+  @@unique([schoolId, dni])
+  @@index([schoolId, isActive])
+  @@index([userId])
+  @@map("parents")
+}
+
+// ParentStudent: relación muchos-a-muchos entre Parent y Student.
+// Soporta: Padre A → Hijo 1, Padre A → Hijo 2, Padre B → Hijo 1.
+model ParentStudent {
+  id           BigInt   @id @default(autoincrement())
+  parentId     BigInt   @map("parent_id")
+  studentId    BigInt   @map("student_id")
+  relationship String?  @db.VarChar(50)
+  isPrimary    Boolean  @default(false) @map("is_primary")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  parent  Parent  @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id])
+
+  @@unique([parentId, studentId])
+  @@index([studentId])
+  @@map("parent_students")
 }
