@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class SupabaseStorageService {
@@ -32,10 +33,15 @@ export class SupabaseStorageService {
     return true;
   }
 
+  // Devuelve el storagePath del objeto subido (NO una URL pública/firmada).
+  // El bucket es privado: la URL servible se genera aparte, al leer, con
+  // getSignedUrls(). Guardar el path (no la URL) es lo que permite firmar
+  // con una vigencia distinta cada vez que se lee.
   async uploadPhoto(file: Express.Multer.File, storagePath: string): Promise<string | null> {
     // Fallback a disco local si Supabase no está configurado
     if (!this.supabase) {
-      return this._uploadToDisk(file, storagePath);
+      await this._uploadToDisk(file, storagePath);
+      return storagePath;
     }
 
     try {
@@ -51,9 +57,7 @@ export class SupabaseStorageService {
         return null;
       }
 
-      // Devuelve la URL pública del objeto
-      const { data } = this.supabase.storage.from(this.bucket).getPublicUrl(storagePath);
-      return data.publicUrl;
+      return storagePath;
     } catch (err) {
       this.logger.error(`Excepción subiendo a Supabase Storage: ${(err as Error).message}`);
       return null;
@@ -61,14 +65,37 @@ export class SupabaseStorageService {
   }
 
   async uploadPhotos(files: Express.Multer.File[], prefix: string): Promise<string[]> {
-    const urls: string[] = [];
+    const paths: string[] = [];
     for (const file of files) {
       const ext = (file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
-      const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-      const url = await this.uploadPhoto(file, `${prefix}/${filename}`);
-      if (url) urls.push(url);
+      const filename = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
+      const path = await this.uploadPhoto(file, `${prefix}/${filename}`);
+      if (path) paths.push(path);
     }
-    return urls;
+    return paths;
+  }
+
+  // Convierte storagePaths guardados en URLs firmadas de lectura, de vigencia
+  // corta. Firma en lote (una sola llamada) en vez de una por foto.
+  async getSignedUrls(paths: string[], expiresInSeconds = 3600): Promise<string[]> {
+    if (paths.length === 0) return [];
+
+    // Fallback disco local: no hay bucket que firmar, se sirve directo
+    // por la ruta estática /uploads/ que ya expone el servidor.
+    if (!this.supabase) {
+      return paths.map((p) => `${this.baseUrl}/uploads/${p}`);
+    }
+
+    const { data, error } = await this.supabase.storage
+      .from(this.bucket)
+      .createSignedUrls(paths, expiresInSeconds);
+
+    if (error) {
+      this.logger.error(`Error firmando URLs de Supabase Storage: ${error.message}`);
+      return [];
+    }
+
+    return data.map((d) => d.signedUrl ?? '').filter((url) => url !== '');
   }
 
   // ── Fallback a disco local (solo desarrollo sin Supabase) ──────────────

@@ -47,6 +47,11 @@ export class TeachersController {
     @UploadedFiles() files: Express.Multer.File[],
     @Body() body: { date: string },
   ) {
+    // NOTA (no corregido en este cambio): la subida ocurre ANTES de validar
+    // que exista una gc_attendance_session para este docente+fecha. Si no
+    // existe, saveAttendancePhotos() lanza BadRequestException y el archivo
+    // queda huérfano en Storage (ya subido, sin fila que lo referencie).
+    // Detectado en auditoría de seguridad — pendiente de corrección aparte.
     const prefix = `${req.user.sub}/${body.date}`;
     const photoUrls = await this.storageService.uploadPhotos(files ?? [], prefix);
     return this.teachersService.saveAttendancePhotos(BigInt(req.user.sub), body.date, photoUrls);
