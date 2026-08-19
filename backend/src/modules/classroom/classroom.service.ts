@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SupabaseStorageService } from '../storage/supabase-storage.service';
 
 const STUDENT_SCOPES = [
   'https://www.googleapis.com/auth/classroom.courses.readonly',
@@ -29,6 +30,7 @@ export class ClassroomService {
   constructor(
     private prisma: PrismaService,
     private config: ConfigService,
+    private storage: SupabaseStorageService,
   ) {}
 
   private createOAuthClient() {
@@ -581,10 +583,11 @@ export class ClassroomService {
       include: { records: { select: { status: true } } },
     });
 
-    const photoUrls: string[] = session && Array.isArray(session.photoUrls)
+    const storedPhotoPaths: string[] = session && Array.isArray(session.photoUrls)
       ? (session.photoUrls as string[])
       : [];
-    const photoCount = photoUrls.length;
+    const photoUrls = await this.storage.getSignedUrls(storedPhotoPaths);
+    const photoCount = storedPhotoPaths.length;
     const arrivalStatus: string | null = session?.records[0]?.status ?? null;
 
     let arrivalTime: string | null = null;
@@ -1239,10 +1242,11 @@ export class ClassroomService {
 
     // ── todaySummary ──
     const session = sessionRows[0] ?? null;
-    const photoUrls: string[] = session && Array.isArray(session.photo_urls)
+    const storedPhotoPaths: string[] = session && Array.isArray(session.photo_urls)
       ? (session.photo_urls as string[])
       : [];
-    const photoCount = photoUrls.length;
+    const photoUrls = await this.storage.getSignedUrls(storedPhotoPaths);
+    const photoCount = storedPhotoPaths.length;
     const arrivalStatus: string | null = session?.status ?? null;
 
     let arrivalTime: string | null = null;
