@@ -78,17 +78,16 @@ class _LoginPageState extends State<LoginPage> {
   };
 
   // ── Continuar con Google ─────────────────────────────────
-  // Requiere el código de invitación del colegio (obligatorio — sin él el
-  // backend rechaza con INVITATION_REQUIRED antes de crear cualquier
-  // cuenta). Obtiene el ID Token de Google y envía ambos al backend, que
-  // valida todo criptográfica e institucionalmente antes de vincular.
+  // El código de invitación es obligatorio SOLO la primera vez (backend
+  // rechaza con INVITATION_REQUIRED si el googleSub es nuevo o no está
+  // vinculado todavía — ver AuthService.loginWithGoogle). Para un padre
+  // que YA está vinculado, el backend acepta el login sin código en
+  // absoluto — por eso acá NO se bloquea localmente si el campo está
+  // vacío; se manda tal cual y es el backend quien decide, mostrando
+  // INVITATION_REQUIRED (mapeado más abajo) solo si de verdad hacía falta.
   Future<void> _onGoogleLoginPressed() async {
     FocusScope.of(context).unfocus();
     final invitationToken = _invitationController.text.trim();
-    if (invitationToken.isEmpty) {
-      _showError(_invitationErrorMessages['INVITATION_REQUIRED']!);
-      return;
-    }
     try {
       final idToken = await GoogleSignInService.instance.signIn();
       if (!mounted) return;
