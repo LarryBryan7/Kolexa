@@ -340,7 +340,9 @@ export class AdminService {
       include: {
         enrollments: {
           where: { isActive: true },
-          include: { classroom: { select: { grade: true, section: true, academicYear: true } } },
+          include: {
+            classroom: { select: { id: true, grade: true, section: true, academicYear: true } },
+          },
         },
         _count: { select: { parentLinks: true } },
       },

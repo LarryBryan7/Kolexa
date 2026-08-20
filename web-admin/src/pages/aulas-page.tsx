@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Users, X } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { LoadingState } from '@/components/loading-state';
 import { ErrorState } from '@/components/error-state';
 import { DataTable } from '@/components/data-table';
 import { StatusBadge } from '@/components/status-badge';
+import { SearchInput } from '@/components/search-input';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,7 +34,11 @@ import {
   useCreateClassroom,
   useUpdateClassroom,
   useDeleteClassroom,
+  useCreateEnrollment,
+  useDeleteEnrollment,
+  studentsInClassroom,
 } from '@/hooks/use-classrooms';
+import { useStudents } from '@/hooks/use-students';
 import type { Classroom } from '@/lib/types';
 import type { ColumnDef } from '@tanstack/react-table';
 
@@ -57,6 +62,7 @@ export function AulasPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Classroom | null>(null);
   const [deleting, setDeleting] = useState<Classroom | null>(null);
+  const [managingClassroom, setManagingClassroom] = useState<Classroom | null>(null);
 
   const {
     register,
@@ -183,6 +189,15 @@ export function AulasPage() {
       header: '',
       cell: ({ row }) => (
         <div className="flex justify-end gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setManagingClassroom(row.original)}
+            aria-label="Gestionar alumnos"
+            title="Gestionar alumnos"
+          >
+            <Users className="h-4 w-4" />
+          </Button>
           <Button variant="ghost" size="icon" onClick={() => openEdit(row.original)} aria-label="Editar">
             <Pencil className="h-4 w-4" />
           </Button>
@@ -301,6 +316,170 @@ export function AulasPage() {
         loading={deleteClassroom.isPending}
         onConfirm={onConfirmDelete}
       />
+
+      {managingClassroom && (
+        <ManageEnrollmentsDialog
+          classroom={managingClassroom}
+          onClose={() => setManagingClassroom(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// ── Modal de matrícula (Student ↔ Classroom) ─────────────────
+// Muestra los alumnos ya matriculados en el aula (con opción de dar de
+// baja) y un buscador para matricular nuevos. No hay endpoint dedicado
+// "alumnos por aula" en el backend: se deriva de useStudents() filtrando
+// por el id del aula en enrollments[].classroom.id.
+function ManageEnrollmentsDialog({ classroom, onClose }: { classroom: Classroom; onClose: () => void }) {
+  const [search, setSearch] = useState('');
+  const { data: allStudents } = useStudents();
+  const { data: searchResults, isLoading: searching } = useStudents(search);
+  const createEnrollment = useCreateEnrollment();
+  const deleteEnrollment = useDeleteEnrollment();
+  const { toast } = useToast();
+  const [unenrollTarget, setUnenrollTarget] = useState<{ enrollmentId: string; name: string } | null>(null);
+
+  const enrolled = studentsInClassroom(allStudents, classroom.id);
+  const enrolledIds = new Set(enrolled.map((s) => s.id));
+  const results = (searchResults ?? []).filter((s) => !enrolledIds.has(s.id));
+
+  const handleEnroll = async (studentId: string) => {
+    try {
+      await createEnrollment.mutateAsync({
+        studentId,
+        classroomId: classroom.id,
+        academicYear: classroom.academicYear,
+      });
+      toast({ title: 'Alumno matriculado', variant: 'success' });
+    } catch (err) {
+      toast({
+        title: 'No se pudo matricular',
+        description: err instanceof Error ? err.message : 'Inténtalo nuevamente.',
+        variant: 'error',
+      });
+    }
+  };
+
+  return (
+    <>
+      <Dialog open onOpenChange={(open) => !open && onClose()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Alumnos · {classroom.name}</DialogTitle>
+            <DialogDescription>
+              Matricula alumnos en esta aula para el año académico {classroom.academicYear}.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div>
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Matriculados ({enrolled.length})
+            </p>
+            {enrolled.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Aún no hay alumnos matriculados.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {enrolled.map((student) => {
+                  const enrollment = student.enrollments?.find((e) => e.classroom?.id === classroom.id);
+                  const name = [student.firstName, student.lastName].filter(Boolean).join(' ');
+                  return (
+                    <span
+                      key={student.id}
+                      className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"
+                    >
+                      {name}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          enrollment && setUnenrollTarget({ enrollmentId: enrollment.id, name })
+                        }
+                        aria-label={`Dar de baja a ${name}`}
+                        title="Dar de baja"
+                        className="rounded-full hover:bg-background/60"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Matricular alumno
+            </p>
+            <SearchInput
+              placeholder="Buscar por nombre, DNI o código…"
+              value={search}
+              onValueChange={setSearch}
+            />
+            <div className="mt-2 max-h-60 space-y-1 overflow-y-auto">
+              {searching ? (
+                <LoadingState label="Buscando alumnos…" />
+              ) : results.length === 0 ? (
+                <p className="py-4 text-center text-sm text-muted-foreground">
+                  {search ? 'Sin resultados.' : 'Escribe para buscar alumnos.'}
+                </p>
+              ) : (
+                results.map((student) => (
+                  <div
+                    key={student.id}
+                    className="flex items-center justify-between rounded-md border px-3 py-2"
+                  >
+                    <p className="text-sm font-medium">
+                      {student.firstName} {student.lastName}
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleEnroll(student.id)}
+                      disabled={createEnrollment.isPending}
+                    >
+                      Matricular
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={unenrollTarget !== null}
+        onOpenChange={(open) => !open && setUnenrollTarget(null)}
+        title="Dar de baja al alumno"
+        description={
+          unenrollTarget ? `¿Seguro que querés dar de baja a ${unenrollTarget.name} de esta aula?` : undefined
+        }
+        confirmLabel="Dar de baja"
+        destructive
+        loading={deleteEnrollment.isPending}
+        onConfirm={async () => {
+          if (!unenrollTarget) return;
+          try {
+            await deleteEnrollment.mutateAsync(unenrollTarget.enrollmentId);
+            toast({ title: 'Alumno dado de baja del aula', variant: 'success' });
+            setUnenrollTarget(null);
+          } catch (err) {
+            toast({
+              title: 'No se pudo dar de baja',
+              description: err instanceof Error ? err.message : 'Inténtalo nuevamente.',
+              variant: 'error',
+            });
+          }
+        }}
+      />
+    </>
   );
 }
