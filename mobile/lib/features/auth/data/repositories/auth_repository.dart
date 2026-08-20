@@ -112,6 +112,15 @@ class AuthRepository {
 
   Future<bool> hasActiveSession() => TokenStore.hasAccessToken();
 
+  // Re-cachea el usuario SIN pegarle al backend — para cuando el server ya
+  // se actualizó por otra vía (ej. subir foto de un hijo) y solo hace
+  // falta que getCurrentUser() (próximo arranque) y el resto de la app
+  // vean el dato nuevo de inmediato.
+  Future<void> updateCachedUser(UserModel user) async {
+    final prefs = await _prefs;
+    await prefs.setString(_userKey, jsonEncode(user.toJson()));
+  }
+
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,

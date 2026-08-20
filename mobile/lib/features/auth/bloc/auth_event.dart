@@ -26,6 +26,8 @@
 // 'abstract' significa que no se puede instanciar directamente.
 // 'sealed' (Dart 3) garantiza que todos los subtipos están definidos
 // en este archivo — permite exhaustividad en el switch del BLoC.
+import '../data/models/user_model.dart';
+
 sealed class AuthEvent {
   const AuthEvent();
 }
@@ -100,4 +102,15 @@ final class ChangePasswordEvent extends AuthEvent {
     required this.currentPassword,
     required this.newPassword,
   });
+}
+
+// ── UserUpdatedEvent ──────────────────────────────────────
+// Refresca el UserModel cacheado (memoria + SharedPreferences) SIN pegarle
+// al backend — para cuando algo ya actualizó al usuario del lado del
+// servidor (ej. subir la foto de un hijo en HijosEncontradosPage) y solo
+// hace falta que el resto de la app (Home) vea el dato nuevo de inmediato,
+// sin esperar al próximo login.
+final class UserUpdatedEvent extends AuthEvent {
+  final UserModel user;
+  const UserUpdatedEvent(this.user);
 }

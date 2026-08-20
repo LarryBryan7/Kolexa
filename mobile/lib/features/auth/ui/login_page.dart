@@ -168,7 +168,13 @@ class _LoginPageState extends State<LoginPage> {
       backgroundColor: _kBg,
       body: BlocConsumer<AuthBloc, AuthState>(
         listener: (context, state) {
-          if (state is AuthAuthenticated) context.go(AppRouter.home);
+          if (state is AuthAuthenticated) {
+            if (state.isFirstGoogleLogin) {
+              context.go(AppRouter.hijosEncontrados, extra: state.user);
+            } else {
+              context.go(AppRouter.home);
+            }
+          }
           if (state is AuthError) {
             // state.message llega tal cual del backend (ver AuthBloc._onGoogleLogin
             // y AuthError). Para los códigos de invitación se mapea por

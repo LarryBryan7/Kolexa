@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import '../../../../core/api/api_client.dart';
 import '../models/gc_models.dart';
 
@@ -68,6 +69,17 @@ class ClassroomRepository {
     final res = await _api.get('classroom/parent/home?studentId=$studentId');
     final data = res.data as Map<String, dynamic>;
     return ParentHomeData.fromJson(data);
+  }
+
+  /// Sube/reemplaza la foto de perfil de un hijo. Devuelve la URL firmada
+  /// lista para mostrar de inmediato (bucket privado, vence en 1h — se
+  /// vuelve a firmar sola en el próximo login).
+  Future<String> uploadAvatar(String studentId, String photoPath) async {
+    final formData = FormData.fromMap({
+      'photo': await MultipartFile.fromFile(photoPath, filename: photoPath.split('/').last),
+    });
+    final res = await _api.post('classroom/student/$studentId/avatar', data: formData);
+    return (res.data as Map<String, dynamic>)['avatarUrl'] as String;
   }
 }
 

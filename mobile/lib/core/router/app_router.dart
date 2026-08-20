@@ -31,6 +31,8 @@ import '../../features/home/ui/home_docente_page.dart';
 import '../../features/home/ui/home_director_page.dart';
 import '../../features/onboarding/ui/welcome_page.dart';
 import '../../features/onboarding/ui/role_selection_page.dart';
+import '../../features/onboarding/ui/hijos_encontrados_page.dart';
+import '../../features/auth/data/models/user_model.dart';
 import '../services/onboarding_service.dart';
 import '../../features/classroom/ui/classroom_page.dart';
 import '../../features/classroom/bloc/classroom_bloc.dart';
@@ -43,6 +45,7 @@ class AppRouter {
   static const String welcome = '/welcome';
   static const String roleSelection = '/role-selection';
   static const String login = '/login';
+  static const String hijosEncontrados = '/hijos-encontrados';
   static const String home = '/home';
   static const String classroom = '/classroom';
   static const String estaSemana = '/esta-semana';
@@ -129,6 +132,10 @@ class AppRouter {
             final role = extra?['role'] as String? ?? OnboardingService.instance.selectedRole;
             return LoginPage(role: role);
           },
+        ),
+        GoRoute(
+          path: hijosEncontrados,
+          builder: (_, state) => HijosEncontradosPage(user: state.extra as UserModel),
         ),
         GoRoute(
           path: home,
