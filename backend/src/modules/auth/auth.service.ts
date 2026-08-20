@@ -194,8 +194,44 @@ export class AuthService {
     }
     const googleEmail = (payload.email as string).trim().toLowerCase();
 
-    // 2. Invitación obligatoria para el flujo de padre. No se crea NINGÚN
-    //    User antes de validar esto — evita cuentas "flotantes" sin colegio.
+    // 2. Buscar el usuario por googleSub (fuente de verdad del token
+    //    validado) ANTES de exigir invitationToken. Si ya existe un User
+    //    con este googleSub Y ya está vinculado a un Parent, es un login
+    //    de RETORNO (reinstaló la app, cambió de celular, cerró sesión y
+    //    volvió a entrar) — la invitación ya cumplió su propósito la
+    //    primera vez, no tiene sentido volver a exigirla ni pedirle al
+    //    padre que guarde el código para siempre.
+    const existing = await this.prisma.user.findUnique({
+      where: { googleSub: payload.sub },
+      select: {
+        id: true, email: true, firstName: true, lastName: true, avatar: true,
+        needsPasswordChange: true, isActive: true, deletedAt: true,
+      },
+    });
+    if (existing && (!existing.isActive || existing.deletedAt)) {
+      throw new UnauthorizedException('La cuenta está inactiva o ha sido eliminada');
+    }
+
+    let user = existing;
+
+    // El atajo de retorno SOLO aplica si no mandan ningún invitationToken.
+    // Si mandan uno, es una acción explícita de vinculación (puede ser una
+    // invitación NUEVA para un Parent distinto — mismo Google, otro colegio
+    // u otro hijo no emparentado con el vínculo anterior) y debe procesarse
+    // siempre por el flujo normal, sin importar que este User YA esté
+    // vinculado a algún OTRO Parent.
+    const returningParent = existing && !dto.invitationToken
+      ? await this.prisma.parent.findFirst({ where: { userId: existing.id }, select: { id: true } })
+      : null;
+
+    if (existing && returningParent) {
+      // Atajo de retorno — ya vinculado, sin token nuevo que procesar. Se
+      // salta directo a la carga de roles/tokens (paso 6 más abajo). user
+      // ya quedó resuelto (= existing).
+    } else {
+    // 3. Invitación obligatoria para el flujo de padre (primera vinculación
+    //    o Caso C más abajo). No se crea NINGÚN User antes de validar esto
+    //    — evita cuentas "flotantes" sin colegio.
     if (!dto.invitationToken) {
       throw new UnauthorizedException('INVITATION_REQUIRED');
     }
@@ -219,27 +255,14 @@ export class AuthService {
       throw new BadRequestException('INVITATION_INVALID_ROLE');
     }
 
-    // 3. Buscar el usuario por googleSub (fuente de verdad del token validado).
-    const existing = await this.prisma.user.findUnique({
-      where: { googleSub: payload.sub },
-      select: {
-        id: true, email: true, firstName: true, lastName: true, avatar: true,
-        needsPasswordChange: true, isActive: true, deletedAt: true,
-      },
-    });
-    if (existing && (!existing.isActive || existing.deletedAt)) {
-      throw new UnauthorizedException('La cuenta está inactiva o ha sido eliminada');
-    }
-
-    let user = existing;
-
     // 4. Ramificación por el estado de Parent.userId — Casos A/B/C.
     if (parentRecord.userId !== null) {
       if (existing && parentRecord.userId === existing.id) {
         // Caso B — ya vinculado a ESTE mismo usuario (doble-tap o reintento
-        // de red tras un éxito previo). Idempotente: no se toca la BD de
-        // nuevo, no se valida usedAt/expiresAt/email otra vez — el estado
-        // deseado ya existe. Se continúa directo a generar la sesión.
+        // de red tras un éxito previo, con invitationToken igual presente
+        // — a diferencia del atajo de retorno de arriba, que no lo exige).
+        // Idempotente: no se toca la BD de nuevo, no se valida
+        // usedAt/expiresAt/email otra vez — el estado deseado ya existe.
         user = existing;
       } else {
         // Caso C — vinculado a otro usuario. Rechazar siempre, sin excepción.
@@ -422,6 +445,7 @@ export class AuthService {
         }
       }
     }
+    } // fin else (no era un padre de retorno) — ver comentario del paso 2
 
     if (!user) {
       // No debería ocurrir (defensivo): si llegamos aquí sin user, algo en
