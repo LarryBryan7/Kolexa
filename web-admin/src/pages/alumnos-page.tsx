@@ -32,14 +32,20 @@ import { useStudents, useCreateStudent, useUpdateStudent } from '@/hooks/use-stu
 import type { Student } from '@/lib/types';
 import type { ColumnDef } from '@tanstack/react-table';
 
-const studentSchema = z.object({
-  firstName: z.string().min(1, 'El nombre es obligatorio'),
-  lastName: z.string().optional().nullable(),
-  dni: z.string().optional().nullable(),
-  code: z.string().optional().nullable(),
-  birthday: z.string().optional().nullable(),
-  sex: z.enum(['M', 'F']).optional().nullable(),
-});
+const studentSchema = z
+  .object({
+    firstName: z.string().min(1, 'El nombre es obligatorio'),
+    lastName: z.string().optional().nullable(),
+    dni: z.string().optional().nullable(),
+    code: z.string().optional().nullable(),
+    birthday: z.string().optional().nullable(),
+    sex: z.enum(['M', 'F']).optional().nullable(),
+  })
+  // El backend exige al menos un identificador fuerte (DNI o código).
+  .refine((data) => !!data.dni?.trim() || !!data.code?.trim(), {
+    message: 'Ingresa al menos un DNI o un código',
+    path: ['dni'],
+  });
 
 type StudentForm = z.infer<typeof studentSchema>;
 
@@ -207,10 +213,20 @@ export function AlumnosPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-4">
-              <FormField label="DNI" htmlFor="dni" error={errors.dni?.message}>
+              <FormField
+                label="DNI"
+                htmlFor="dni"
+                error={errors.dni?.message}
+                hint="Obligatorio si no hay código."
+              >
                 <Input id="dni" placeholder="DNI" {...register('dni')} />
               </FormField>
-              <FormField label="Código" htmlFor="code" error={errors.code?.message}>
+              <FormField
+                label="Código"
+                htmlFor="code"
+                error={errors.code?.message}
+                hint="Obligatorio si no hay DNI."
+              >
                 <Input id="code" placeholder="Código" {...register('code')} />
               </FormField>
             </div>

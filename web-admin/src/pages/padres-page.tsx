@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Pencil, Send, Copy, Check } from 'lucide-react';
+import { Plus, Pencil, Send, Copy, Check, UserPlus, X } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { LoadingState } from '@/components/loading-state';
 import { ErrorState } from '@/components/error-state';
 import { DataTable } from '@/components/data-table';
 import { StatusBadge } from '@/components/status-badge';
 import { SearchInput } from '@/components/search-input';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FormField } from '@/components/form-field';
@@ -27,8 +28,11 @@ import {
   useUpdateParent,
   useActiveInvitation,
   useGenerateInvitation,
+  useCreateParentStudentLink,
+  useDeleteParentStudentLink,
 } from '@/hooks/use-parents';
-import type { Parent } from '@/lib/types';
+import { useStudents } from '@/hooks/use-students';
+import type { Parent, ParentStudentLink } from '@/lib/types';
 import type { ColumnDef } from '@tanstack/react-table';
 
 const parentSchema = z.object({
@@ -51,6 +55,9 @@ export function PadresPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Parent | null>(null);
   const [invitingParent, setInvitingParent] = useState<Parent | null>(null);
+  const [linkingParent, setLinkingParent] = useState<Parent | null>(null);
+  const [unlinkTarget, setUnlinkTarget] = useState<{ link: ParentStudentLink; parentName: string } | null>(null);
+  const deleteParentStudentLink = useDeleteParentStudentLink();
 
   const {
     register,
@@ -124,11 +131,33 @@ export function PadresPage() {
       accessorKey: 'students',
       header: 'Alumnos vinculados',
       cell: ({ row }) => {
-        const students = row.original.students ?? [];
-        if (students.length === 0) return '—';
-        return students
-          .map((link) => [link.student?.firstName, link.student?.lastName].filter(Boolean).join(' '))
-          .join(', ');
+        const parent = row.original;
+        const students = parent.students ?? [];
+        if (students.length === 0) return <span className="text-muted-foreground">—</span>;
+        return (
+          <div className="flex flex-wrap gap-1">
+            {students.map((link) => {
+              const name = [link.student?.firstName, link.student?.lastName].filter(Boolean).join(' ');
+              return (
+                <span
+                  key={link.id}
+                  className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"
+                >
+                  {name || '—'}
+                  <button
+                    type="button"
+                    onClick={() => setUnlinkTarget({ link, parentName: `${parent.firstName} ${parent.lastName ?? ''}`.trim() })}
+                    aria-label={`Desvincular ${name}`}
+                    title="Desvincular"
+                    className="rounded-full hover:bg-background/60"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        );
       },
     },
     {
@@ -153,6 +182,15 @@ export function PadresPage() {
       header: '',
       cell: ({ row }) => (
         <div className="flex justify-end gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setLinkingParent(row.original)}
+            aria-label="Vincular alumno"
+            title="Vincular alumno"
+          >
+            <UserPlus className="h-4 w-4" />
+          </Button>
           {row.original.linkStatus === 'pending' && (
             <Button
               variant="ghost"
@@ -257,6 +295,38 @@ export function PadresPage() {
       {invitingParent && (
         <InvitationDialog parent={invitingParent} onClose={() => setInvitingParent(null)} />
       )}
+
+      {linkingParent && (
+        <LinkStudentDialog parent={linkingParent} onClose={() => setLinkingParent(null)} />
+      )}
+
+      <ConfirmDialog
+        open={unlinkTarget !== null}
+        onOpenChange={(open) => !open && setUnlinkTarget(null)}
+        title="Desvincular alumno"
+        description={
+          unlinkTarget
+            ? `¿Seguro que querés desvincular a ${unlinkTarget.parentName} de ${[unlinkTarget.link.student?.firstName, unlinkTarget.link.student?.lastName].filter(Boolean).join(' ')}? Si la cuenta ya estaba vinculada, el padre perderá acceso a este alumno desde la app.`
+            : undefined
+        }
+        confirmLabel="Desvincular"
+        destructive
+        loading={deleteParentStudentLink.isPending}
+        onConfirm={async () => {
+          if (!unlinkTarget) return;
+          try {
+            await deleteParentStudentLink.mutateAsync(unlinkTarget.link.id);
+            toast({ title: 'Alumno desvinculado', variant: 'success' });
+            setUnlinkTarget(null);
+          } catch (err) {
+            toast({
+              title: 'No se pudo desvincular',
+              description: err instanceof Error ? err.message : 'Inténtalo nuevamente.',
+              variant: 'error',
+            });
+          }
+        }}
+      />
     </div>
   );
 }
@@ -359,6 +429,99 @@ function InvitationDialog({ parent, onClose }: { parent: Parent; onClose: () => 
               {generateInvitation.isPending ? 'Generando…' : 'Generar invitación'}
             </Button>
           )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Modal de vinculación con alumnos ─────────────────────────
+// Busca alumnos del colegio y vincula al padre con el que se elija.
+// Los ya vinculados se excluyen de la lista para no duplicar el vínculo
+// (el backend igual lo rechazaría con 409, pero es mejor no ofrecerlo).
+function LinkStudentDialog({ parent, onClose }: { parent: Parent; onClose: () => void }) {
+  const [search, setSearch] = useState('');
+  const { data: students, isLoading } = useStudents(search);
+  const createLink = useCreateParentStudentLink();
+  const { toast } = useToast();
+
+  const linkedStudentIds = new Set((parent.students ?? []).map((link) => link.studentId));
+  const results = (students ?? []).filter((student) => !linkedStudentIds.has(student.id));
+
+  const handleLink = async (studentId: string) => {
+    try {
+      await createLink.mutateAsync({ parentId: parent.id, studentId });
+      toast({ title: 'Alumno vinculado', variant: 'success' });
+    } catch (err) {
+      toast({
+        title: 'No se pudo vincular',
+        description: err instanceof Error ? err.message : 'Inténtalo nuevamente.',
+        variant: 'error',
+      });
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Vincular alumno · {parent.firstName} {parent.lastName}</DialogTitle>
+          <DialogDescription>
+            Buscá al alumno y vinculalo con este padre. Un alumno puede tener varios padres, y un
+            padre puede tener varios hijos.
+          </DialogDescription>
+        </DialogHeader>
+
+        <SearchInput
+          placeholder="Buscar por nombre, DNI o código…"
+          value={search}
+          onValueChange={setSearch}
+        />
+
+        <div className="max-h-72 space-y-1 overflow-y-auto">
+          {isLoading ? (
+            <LoadingState label="Buscando alumnos…" />
+          ) : results.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              {search ? 'Sin resultados.' : 'No hay alumnos disponibles para vincular.'}
+            </p>
+          ) : (
+            results.map((student) => {
+              const enrollment = student.enrollments?.[0]?.classroom;
+              const grade = enrollment
+                ? [enrollment.grade, enrollment.section].filter(Boolean).join(' ')
+                : null;
+              return (
+                <div
+                  key={student.id}
+                  className="flex items-center justify-between rounded-md border px-3 py-2"
+                >
+                  <div>
+                    <p className="text-sm font-medium">
+                      {student.firstName} {student.lastName}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {[student.dni, grade].filter(Boolean).join(' · ') || '—'}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleLink(student.id)}
+                    disabled={createLink.isPending}
+                  >
+                    Vincular
+                  </Button>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cerrar
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
