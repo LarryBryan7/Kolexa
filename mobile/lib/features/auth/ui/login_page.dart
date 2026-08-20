@@ -189,10 +189,10 @@ class _LoginPageState extends State<LoginPage> {
 
                     // ── Título ────────────────────────────────
                     const SizedBox(height: 19),
-                    const Text(
-                      'Iniciar sesión',
+                    Text(
+                      _isParent ? 'Ingresa a Kolexa' : 'Iniciar sesión',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w700,
                         color: _kTextDark,
@@ -203,7 +203,7 @@ class _LoginPageState extends State<LoginPage> {
                     const SizedBox(height: 5),
                     Text(
                       _isParent
-                          ? 'Continúa con tu cuenta de Google'
+                          ? 'Brindanos el código que te generó tu colegio y continúa con Google'
                           : 'Ingresa tus datos para continuar',
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontSize: 15, color: _kTextGray),
@@ -358,7 +358,7 @@ class _LoginPageState extends State<LoginPage> {
                         enabled: !isLoading,
                         style: const TextStyle(color: _kTextDark, fontSize: 14),
                         decoration: _fieldDecoration(
-                          hint: 'Código de invitación del colegio',
+                          hint: 'Código de invitación',
                           icon: Icons.key_outlined,
                         ),
                       ),
@@ -381,25 +381,34 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                         ),
                         onPressed: isLoading ? null : _onGoogleLoginPressed,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SvgPicture.asset(
-                              'assets/icons/ic_google.svg',
-                              width: 18,
-                              height: 18,
-                            ),
-                            const SizedBox(width: 12),
-                            const Text(
-                              'Continuar con Google',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                                color: _kTextDark,
+                        child: isLoading
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: _kPrimary,
+                                ),
+                              )
+                            : Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  SvgPicture.asset(
+                                    'assets/icons/ic_google.svg',
+                                    width: 18,
+                                    height: 18,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  const Text(
+                                    'Continuar con Google',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                      color: _kTextDark,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                          ],
-                        ),
                       ),
                     ),
 
