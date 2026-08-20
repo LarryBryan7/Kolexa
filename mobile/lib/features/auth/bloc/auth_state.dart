@@ -65,14 +65,7 @@ final class AuthLoading extends AuthState {
 final class AuthAuthenticated extends AuthState {
   final UserModel user; // El usuario autenticado con sus datos
 
-  // true solo en el instante justo después del PRIMER login con Google
-  // exitoso de este dispositivo (ver AuthBloc._onGoogleLogin) — LoginPage
-  // lo usa para navegar a HijosEncontradosPage en vez de directo a Home.
-  // false en cualquier otro caso (CheckAuthEvent, login por contraseña,
-  // logins de Google posteriores).
-  final bool isFirstGoogleLogin;
-
-  const AuthAuthenticated(this.user, {this.isFirstGoogleLogin = false});
+  const AuthAuthenticated(this.user);
 
   @override
   String toString() => 'AuthAuthenticated(user: ${user.email})';
