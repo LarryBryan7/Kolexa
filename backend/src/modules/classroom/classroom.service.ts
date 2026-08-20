@@ -142,6 +142,33 @@ export class ClassroomService {
     }
   }
 
+  // ── Foto de perfil del alumno (subida por el padre) ──────
+  // Bucket separado del de asistencia ('avatars', privado) — el padre
+  // solo puede tocar la foto de un alumno que ya pasó por
+  // assertStudentOwnedByParent() en el controller. upsert:true a
+  // propósito (a diferencia de uploadPhoto() para asistencia): reemplazar
+  // la foto de perfil debe pisar la anterior, no acumular archivos huérfanos.
+  async uploadStudentAvatar(
+    studentId: bigint,
+    file: Express.Multer.File,
+  ): Promise<{ avatarUrl: string }> {
+    const ext = (file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
+    const storagePath = `${studentId}/avatar.${ext}`;
+
+    const path = await this.storage.uploadPhoto(file, storagePath, 'avatars', true);
+    if (!path) {
+      throw new Error('No se pudo subir la foto');
+    }
+
+    await this.prisma.student.update({
+      where: { id: studentId },
+      data: { avatar: path },
+    });
+
+    const [signedUrl] = await this.storage.getSignedUrls([path], 3600, 'avatars');
+    return { avatarUrl: signedUrl ?? '' };
+  }
+
   // ── Verifica si el docente tiene cuenta conectada ────────
   async isTeacherConnected(userId: bigint): Promise<boolean> {
     const token = await this.prisma.teacherGoogleToken.findUnique({ where: { userId } });

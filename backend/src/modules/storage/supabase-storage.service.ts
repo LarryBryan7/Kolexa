@@ -37,7 +37,17 @@ export class SupabaseStorageService {
   // El bucket es privado: la URL servible se genera aparte, al leer, con
   // getSignedUrls(). Guardar el path (no la URL) es lo que permite firmar
   // con una vigencia distinta cada vez que se lee.
-  async uploadPhoto(file: Express.Multer.File, storagePath: string): Promise<string | null> {
+  //
+  // bucket es opcional — por defecto usa el bucket de la instancia
+  // (SUPABASE_STORAGE_BUCKET, histórico: 'attendance'), pero permite subir
+  // a un bucket DISTINTO (ej. 'avatars') sin necesitar una instancia nueva
+  // del servicio por cada bucket.
+  async uploadPhoto(
+    file: Express.Multer.File,
+    storagePath: string,
+    bucket: string = this.bucket,
+    upsert: boolean = false,
+  ): Promise<string | null> {
     // Fallback a disco local si Supabase no está configurado
     if (!this.supabase) {
       await this._uploadToDisk(file, storagePath);
@@ -46,30 +56,34 @@ export class SupabaseStorageService {
 
     try {
       const { error } = await this.supabase.storage
-        .from(this.bucket)
+        .from(bucket)
         .upload(storagePath, file.buffer, {
           contentType: file.mimetype,
-          upsert: false,
+          upsert,
         });
 
       if (error) {
-        this.logger.error(`Error subiendo a Supabase Storage: ${error.message}`);
+        this.logger.error(`Error subiendo a Supabase Storage (bucket ${bucket}): ${error.message}`);
         return null;
       }
 
       return storagePath;
     } catch (err) {
-      this.logger.error(`Excepción subiendo a Supabase Storage: ${(err as Error).message}`);
+      this.logger.error(`Excepción subiendo a Supabase Storage (bucket ${bucket}): ${(err as Error).message}`);
       return null;
     }
   }
 
-  async uploadPhotos(files: Express.Multer.File[], prefix: string): Promise<string[]> {
+  async uploadPhotos(
+    files: Express.Multer.File[],
+    prefix: string,
+    bucket: string = this.bucket,
+  ): Promise<string[]> {
     const paths: string[] = [];
     for (const file of files) {
       const ext = (file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
       const filename = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
-      const path = await this.uploadPhoto(file, `${prefix}/${filename}`);
+      const path = await this.uploadPhoto(file, `${prefix}/${filename}`, bucket);
       if (path) paths.push(path);
     }
     return paths;
@@ -77,7 +91,11 @@ export class SupabaseStorageService {
 
   // Convierte storagePaths guardados en URLs firmadas de lectura, de vigencia
   // corta. Firma en lote (una sola llamada) en vez de una por foto.
-  async getSignedUrls(paths: string[], expiresInSeconds = 3600): Promise<string[]> {
+  async getSignedUrls(
+    paths: string[],
+    expiresInSeconds = 3600,
+    bucket: string = this.bucket,
+  ): Promise<string[]> {
     if (paths.length === 0) return [];
 
     // Fallback disco local: no hay bucket que firmar, se sirve directo
@@ -87,11 +105,11 @@ export class SupabaseStorageService {
     }
 
     const { data, error } = await this.supabase.storage
-      .from(this.bucket)
+      .from(bucket)
       .createSignedUrls(paths, expiresInSeconds);
 
     if (error) {
-      this.logger.error(`Error firmando URLs de Supabase Storage: ${error.message}`);
+      this.logger.error(`Error firmando URLs de Supabase Storage (bucket ${bucket}): ${error.message}`);
       return [];
     }
 

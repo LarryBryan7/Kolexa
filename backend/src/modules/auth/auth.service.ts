@@ -28,6 +28,7 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SupabaseStorageService } from '../storage/supabase-storage.service';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RegisterWithTokenDto } from './dto/register.dto';
@@ -39,7 +40,22 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private storage: SupabaseStorageService,
   ) {}
+
+  // Convierte los storagePaths de Student.avatar guardados en BD a URLs
+  // firmadas de lectura (bucket 'avatars', privado). Firma en lote — una
+  // sola llamada a Supabase para todos los hijos, no una por hijo.
+  private async _signAvatarPaths(
+    students: { avatar: string | null }[],
+  ): Promise<Map<string, string>> {
+    const paths = students
+      .map((s) => s.avatar)
+      .filter((a): a is string => a !== null);
+    if (paths.length === 0) return new Map();
+    const signed = await this.storage.getSignedUrls(paths, 3600, 'avatars');
+    return new Map(paths.map((p, i) => [p, signed[i] ?? '']));
+  }
 
   // ── LOGIN ──────────────────────────────────────────────
   // Verifica credenciales y devuelve accessToken + refreshToken
@@ -103,6 +119,7 @@ export class AuthService {
       birthday: string | null; section: string | null; avatarUrl: string | null;
     }[] = [];
     if (isParent) {
+      const signedAvatars = await this._signAvatarPaths(studentsData.map((l) => l.student));
       children = studentsData.map((l) => ({
         id: l.student.id.toString(),
         firstName: l.student.firstName,
@@ -110,7 +127,7 @@ export class AuthService {
         code: l.student.code ?? '',
         birthday: l.student.birthday ? l.student.birthday.toISOString().split('T')[0] : null,
         section: l.student.enrollments[0]?.classroom?.name ?? null,
-        avatarUrl: l.student.avatar ?? null,
+        avatarUrl: l.student.avatar ? (signedAvatars.get(l.student.avatar) ?? null) : null,
       }));
     }
 
@@ -486,6 +503,7 @@ export class AuthService {
       birthday: string | null; section: string | null; avatarUrl: string | null;
     }[] = [];
     if (isParent) {
+      const signedAvatars = await this._signAvatarPaths(studentsData.map((l) => l.student));
       children = studentsData.map((l) => ({
         id: l.student.id.toString(),
         firstName: l.student.firstName,
@@ -493,7 +511,7 @@ export class AuthService {
         code: l.student.code ?? '',
         birthday: l.student.birthday ? l.student.birthday.toISOString().split('T')[0] : null,
         section: l.student.enrollments[0]?.classroom?.name ?? null,
-        avatarUrl: l.student.avatar ?? null,
+        avatarUrl: l.student.avatar ? (signedAvatars.get(l.student.avatar) ?? null) : null,
       }));
     }
 

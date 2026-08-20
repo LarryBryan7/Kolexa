@@ -15,6 +15,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { AuthService } from '../../src/modules/auth/auth.service';
+import { SupabaseStorageService } from '../../src/modules/storage/supabase-storage.service';
 import { InvitationsService } from '../../src/modules/invitations/invitations.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { assertLocalTestDatabase } from '../helpers/db-guard';
@@ -43,6 +44,7 @@ describe('Vinculación de padres — integración con Postgres real', () => {
         AuthService,
         InvitationsService,
         PrismaService,
+        SupabaseStorageService,
         { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue('jwt.fake') } },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue('fake-client-id') } },
       ],

@@ -22,9 +22,14 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
+    // StorageModule: AuthService lo necesita para firmar las URLs de foto
+    // de perfil de los hijos (Student.avatar) al devolver el login.
+    StorageModule,
+
     // PassportModule: habilita el sistema de estrategias de Passport
     // defaultStrategy: 'jwt' → usa JWT por defecto en todos los guards
     PassportModule.register({ defaultStrategy: 'jwt' }),

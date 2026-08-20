@@ -18,6 +18,7 @@ import {
 } from '@nestjs/common';
 import { AuthService } from '../../src/modules/auth/auth.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { SupabaseStorageService } from '../../src/modules/storage/supabase-storage.service';
 
 // google-auth-library mockeado a nivel de módulo — así no se toca la
 // validación criptográfica real, solo se controla su resultado en cada test.
@@ -131,6 +132,7 @@ describe('AuthService.loginWithGoogle — flujo de Parent con invitación', () =
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('fake-google-client-id') },
         },
+        { provide: SupabaseStorageService, useValue: { getSignedUrls: jest.fn().mockResolvedValue([]) } },
       ],
     }).compile();
 

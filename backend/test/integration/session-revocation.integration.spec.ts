@@ -12,6 +12,7 @@ import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../../src/modules/auth/auth.service';
+import { SupabaseStorageService } from '../../src/modules/storage/supabase-storage.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { assertLocalTestDatabase } from '../helpers/db-guard';
 
@@ -28,6 +29,7 @@ describe('Revocación de sesión — logout()/refresh() (Postgres real)', () => 
       providers: [
         AuthService,
         PrismaService,
+        SupabaseStorageService,
         {
           provide: JwtService,
           useValue: new JwtService({ secret: 'test-secret-session-revocation' }),

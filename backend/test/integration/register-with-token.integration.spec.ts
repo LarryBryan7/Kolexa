@@ -8,6 +8,7 @@ import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../../src/modules/auth/auth.service';
+import { SupabaseStorageService } from '../../src/modules/storage/supabase-storage.service';
 import { InvitationsService } from '../../src/modules/invitations/invitations.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { assertLocalTestDatabase } from '../helpers/db-guard';
@@ -25,7 +26,7 @@ describe('registerWithToken — consumo de invitación (regresión de concurrenc
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
-        AuthService, InvitationsService, PrismaService,
+        AuthService, InvitationsService, PrismaService, SupabaseStorageService,
         { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue('jwt.fake') } },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue('fake-client-id') } },
       ],
