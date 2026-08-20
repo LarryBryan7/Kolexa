@@ -39,6 +39,29 @@ import '../../features/classroom/bloc/classroom_bloc.dart';
 import '../../features/home/ui/esta_semana_page.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+// ── _fadePage ─────────────────────────────────────────────
+// Transición de fade universal (sin detectar gama de dispositivo — ver
+// plans/plan-animaciones-rendimiento.md §9: el tratamiento "gama baja"
+// (fade puro, barato) se aplica a TODOS, en vez de construir toda la
+// infraestructura de detección de tier para un beneficio marginal).
+// Reemplaza el corte seco por defecto de Navigator/MaterialPage entre
+// pantallas por algo suave, sin agregar dependencias nuevas.
+//
+// Respeta "Reduce Motion" del SO (MediaQuery.disableAnimationsOf):
+// si está activo, no hay transición — el cambio es instantáneo.
+CustomTransitionPage<void> _fadePage(GoRouterState state, Widget child) {
+  return CustomTransitionPage<void>(
+    key: state.pageKey,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 200),
+    reverseTransitionDuration: const Duration(milliseconds: 200),
+    transitionsBuilder: (context, animation, __, child) {
+      if (MediaQuery.disableAnimationsOf(context)) return child;
+      return FadeTransition(opacity: animation, child: child);
+    },
+  );
+}
+
 // ── AppRouter ─────────────────────────────────────────────
 class AppRouter {
   // Rutas como constantes para evitar strings duplicados
@@ -115,45 +138,50 @@ class AppRouter {
       routes: [
         GoRoute(
           path: welcome,
-          builder: (_, __) => const WelcomePage(),
+          pageBuilder: (_, state) => _fadePage(state, const WelcomePage()),
         ),
         GoRoute(
           path: roleSelection,
-          builder: (_, __) => const RoleSelectionPage(),
+          pageBuilder: (_, state) => _fadePage(state, const RoleSelectionPage()),
         ),
         GoRoute(
           path: login,
-          builder: (_, state) {
+          pageBuilder: (_, state) {
             // extra viene de role-selection (navegación recién hecha). Si es
             // null (ej. arranque directo a /login porque el onboarding ya
             // estaba completo — ver initialLocation arriba), se cae al rol
             // persistido por OnboardingService en la última selección.
             final extra = state.extra as Map<String, dynamic>?;
             final role = extra?['role'] as String? ?? OnboardingService.instance.selectedRole;
-            return LoginPage(role: role);
+            return _fadePage(state, LoginPage(role: role));
           },
         ),
         GoRoute(
           path: hijosEncontrados,
-          builder: (_, state) => HijosEncontradosPage(user: state.extra as UserModel),
+          pageBuilder: (_, state) =>
+              _fadePage(state, HijosEncontradosPage(user: state.extra as UserModel)),
         ),
         GoRoute(
           path: home,
-          builder: (context, state) {
+          pageBuilder: (context, state) {
             final authState = context.read<AuthBloc>().state;
             // Parámetro opcional que llega al tocar una notificación
             // de asistencia (se usa para preseleccionar al hijo).
             final studentName = state.uri.queryParameters['studentName'];
+            Widget page;
             if (authState is AuthAuthenticated) {
               if (authState.user.hasRole('school_admin') ||
                   authState.user.hasRole('director')) {
-                return const HomeDirectorPage();
+                page = const HomeDirectorPage();
+              } else if (authState.user.hasRole('teacher')) {
+                page = const HomeDocentePage();
+              } else {
+                page = HomeV2Page(initialStudentName: studentName);
               }
-              if (authState.user.hasRole('teacher')) {
-                return const HomeDocentePage();
-              }
+            } else {
+              page = HomeV2Page(initialStudentName: studentName);
             }
-            return HomeV2Page(initialStudentName: studentName);
+            return _fadePage(state, page);
           },
         ),
         // Ruta de callback deep link OAuth — redirige al home
@@ -167,25 +195,25 @@ class AppRouter {
         ),
         GoRoute(
           path: estaSemana,
-          builder: (context, state) {
+          pageBuilder: (context, state) {
             final studentId = state.uri.queryParameters['studentId'] ?? '';
             final studentName = state.uri.queryParameters['studentName'] ?? 'Alumno';
-            return EstaSemanPage(
+            return _fadePage(state, EstaSemanPage(
               studentId: studentId,
               studentName: studentName,
-            );
+            ));
           },
         ),
         GoRoute(
           path: classroom,
-          builder: (context, state) {
+          pageBuilder: (context, state) {
             final studentId = state.uri.queryParameters['studentId'] ?? '';
             final studentName = state.uri.queryParameters['studentName'] ?? 'Alumno';
-            return BlocProvider.value(
+            return _fadePage(state, BlocProvider.value(
               value: context.read<ClassroomBloc>()
                 ..add(LoadClassroom(studentId)),
               child: ClassroomPage(studentId: studentId, studentName: studentName),
-            );
+            ));
           },
           // Subrutas de módulos (Fase 2+):
           // routes: [
