@@ -34,6 +34,14 @@ class OnboardingService {
   // por role-selection (ver AppRouter.createRouter: initialLocation).
   static const String _keySelectedRole = 'onboarding_selected_role_v1';
 
+  // true una vez que este dispositivo completó con éxito el login con
+  // Google + código de invitación (padre) al menos una vez. A partir de
+  // ahí, LoginPage deja de mostrar el campo de código — el backend ya no
+  // lo exige para un padre vinculado (ver AuthService.loginWithGoogle),
+  // así que mostrarlo de nuevo no tiene sentido, ni siquiera después de
+  // cerrar sesión. Nunca se limpia en logout a propósito.
+  static const String _keyGoogleParentLinked = 'google_parent_linked_once_v1';
+
   // Instancia cacheada de SharedPreferences. Se inicializa en main()
   // ANTES de runApp para que `isCompleted` sea síncrono.
   SharedPreferences? _prefs;
@@ -72,5 +80,12 @@ class OnboardingService {
   // Útil para testing / debug: permite reiniciar el onboarding.
   Future<void> reset() async {
     await _prefs?.remove(_keyOnboardingCompleted);
+  }
+
+  bool get hasLinkedGoogleParentBefore =>
+      _prefs?.getBool(_keyGoogleParentLinked) ?? false;
+
+  Future<void> markGoogleParentLinked() async {
+    await _prefs?.setBool(_keyGoogleParentLinked, true);
   }
 }
