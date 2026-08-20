@@ -1,14 +1,19 @@
 // ============================================================
 // google-login.dto.ts — DTO para el login con Google
 // ============================================================
-// Este DTO recibe ÚNICAMENTE el ID Token emitido por Google.
+// Este DTO recibe el ID Token emitido por Google y, para el flujo
+// de padres, el código de invitación entregado por el colegio.
 //
 // IMPORTANTE (seguridad):
 //   - El backend NO confía en email, firstName, lastName ni googleSub
 //     enviados por el cliente como campos independientes.
 //   - La fuente de verdad es el ID Token, que el backend valida
 //     criptográficamente con Google (firma, issuer, audience, expiración).
-//   - El único dato que aceptamos del cliente es el ID Token en sí.
+//   - schoolId, parentId y el rol NUNCA vienen del cliente — se derivan
+//     server-side de SchoolInvitation y las relaciones existentes en BD.
+//   - invitationToken es opcional a nivel de este DTO a propósito: si
+//     faltara, queremos devolver el código estructurado INVITATION_REQUIRED
+//     (lanzado en el service), no el 400 genérico del ValidationPipe.
 // ============================================================
 
 import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
@@ -19,6 +24,12 @@ export class GoogleLoginDto {
   @IsString()
   @IsNotEmpty({ message: 'El ID Token de Google es requerido' })
   idToken: string;
+
+  // Código de invitación entregado por el colegio. Obligatorio para el
+  // flujo de padre (se valida en AuthService.loginWithGoogle, no aquí).
+  @IsOptional()
+  @IsString()
+  invitationToken?: string;
 
   // Token de Firebase para push notifications (opcional, igual que login).
   @IsOptional()

@@ -168,14 +168,26 @@ class ApiClient {
 
       case DioExceptionType.badResponse:
         final statusCode = e.response?.statusCode;
-        final message = e.response?.data?['message'] ?? 'Error del servidor';
+        final data = e.response?.data;
+        final message = (data is Map ? data['message'] : null) ?? 'Error del servidor';
         final messageStr = message is List ? message.join(', ') : message.toString();
         if (statusCode == 401) {
-          // Si el mensaje viene del servidor úsalo directo (ej: "Credenciales incorrectas").
-          // Solo mostramos "Sesión expirada" cuando es un token inválido.
-          final isTokenError = messageStr.toLowerCase().contains('token');
-          if (isTokenError) {
+          // Clasificación por `code` estructurado, NUNCA por substring de
+          // `message` (hallazgo H-01: message.contains('token') confundía
+          // el GOOGLE_TOKEN_EXPIRED de la sync de Classroom —que no tiene
+          // nada que ver con la sesión KOLEXA— con una sesión vencida).
+          // Cuando el 401 SÍ es de sesión KOLEXA (code SESSION_TOKEN_EXPIRED),
+          // el AuthInterceptor ya intentó el refresh antes de que este catch
+          // se ejecute — si llegamos aquí es porque el refresh también
+          // falló, así que el mensaje sigue siendo el correcto.
+          final code = data is Map ? data['code'] as String? : null;
+          if (code == 'SESSION_TOKEN_EXPIRED') {
             return Exception('Sesión expirada. Por favor inicia sesión de nuevo.');
+          }
+          if (code == 'GOOGLE_TOKEN_EXPIRED') {
+            return Exception(
+              'La conexión con Google Classroom expiró. Vuelve a conectarla desde el colegio.',
+            );
           }
           return Exception(messageStr);
         }

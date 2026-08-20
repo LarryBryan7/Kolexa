@@ -41,6 +41,12 @@ void main() async {
   // notificaciones, inicializar flutter_local_notifications y obtener el
   // token FCM puede tardar varios segundos. Al no hacer `await` aquí, el
   // splash nativo desaparece mucho más rápido.
+  //
+  // NOTA: en modo debug (flutter run) el arranque completo puede tardar
+  // 10-20s+ por el JIT y el VM service de depuración — es overhead exclusivo
+  // de debug, no ocurre en release (medido: 0.8-1.4s en Samsung A10 release).
+  // No usar addPostFrameCallback ni Future.delayed aquí: no reducen el jank
+  // de debug (confirmado con logcat) y solo restan margen en producción.
   unawaited(PushNotificationsService.instance.initialize());
 }
 

@@ -21,6 +21,37 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class PickupService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // ── assertParentOrStaffAccess ─────────────────────────────
+  // Permite el acceso solo a: (a) el padre del alumno (userStudent), o
+  // (b) personal con algún rol asignado en el mismo colegio del alumno
+  // (portero/secretaria/docente/admin — el modelo actual no distingue un
+  // rol específico de "portero", así que "personal de ese colegio" es la
+  // interpretación mínima y segura del comentario original "verificamos
+  // que sea personal del colegio (simplificado)"). Nunca confía en
+  // studentId/rol enviado por el cliente más allá de resolverlo contra
+  // las relaciones reales en BD.
+  private async assertParentOrStaffAccess(userId: bigint, studentId: number): Promise<void> {
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: { schoolId: true },
+    });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    const isParent = await this.prisma.userStudent.findFirst({
+      where: { userId, studentId },
+      select: { id: true },
+    });
+    if (isParent) return;
+
+    const isStaff = await this.prisma.userRole.findFirst({
+      where: { userId, schoolId: student.schoolId },
+      select: { id: true },
+    });
+    if (isStaff) return;
+
+    throw new ForbiddenException('No tienes acceso a este alumno');
+  }
+
   // ── addAuthorizedPerson ───────────────────────────────────
   // El padre agrega una persona autorizada para recoger a su hijo.
   async addAuthorizedPerson(
@@ -57,13 +88,15 @@ export class PickupService {
   // ── getAuthorizedList ─────────────────────────────────────
   // Lista de personas autorizadas para recoger a un alumno.
   // La ve el portero/secretaria cuando alguien llega al colegio.
+  //
+  // Hallazgo BL-4 de la auditoría: el chequeo de acceso (parentRel) se
+  // CALCULABA pero nunca se APLICABA — cualquier usuario autenticado podía
+  // leer nombres, teléfonos, fotos y parentesco de las personas
+  // autorizadas a recoger a un alumno ajeno. Ahora sí se exige: o el
+  // padre del alumno (userStudent), o personal con algún rol en el mismo
+  // colegio del alumno (portero/secretaria/docente/admin).
   async getAuthorizedList(studentId: number, requesterId: bigint) {
-    // Verificar acceso (padre del alumno o personal del colegio)
-    const parentRel = await this.prisma.userStudent.findFirst({
-      where: { userId: requesterId, studentId },
-    });
-    // Si no es padre, verificamos que sea personal del colegio (simplificado)
-    // En producción, verificar roles con más granularidad
+    await this.assertParentOrStaffAccess(requesterId, studentId);
 
     return this.prisma.authorizedPickup.findMany({
       where: { studentId, isActive: true },
@@ -91,6 +124,12 @@ export class PickupService {
   // ── logPickupEvent ────────────────────────────────────────
   // El portero/secretaria registra que el alumno fue recogido.
   // Esto genera una notificación push al padre.
+  //
+  // Hallazgo BL-4 de la auditoría: no existía ningún chequeo de ownership
+  // ni de rol — cualquier autenticado (incluido un padre ajeno) podía
+  // inyectar un evento de recojo falso para cualquier alumno, contaminando
+  // el sistema de seguridad física del colegio. Mismo guard que
+  // getAuthorizedList: padre del alumno o personal del mismo colegio.
   async logPickupEvent(
     data: {
       studentId: number;
@@ -101,6 +140,8 @@ export class PickupService {
     },
     staffId: bigint,
   ) {
+    await this.assertParentOrStaffAccess(staffId, data.studentId);
+
     const event = await this.prisma.pickupEvent.create({
       data: {
         studentId: data.studentId,

@@ -618,8 +618,19 @@ export class AdminService {
     });
   }
 
+  // Hallazgo IM-8 de la auditoría: antes se leía parent.userId UNA vez al
+  // inicio (vía getParentOwned) y ese valor CAPTURADO se usaba varias
+  // consultas después para decidir el bridge — si el padre completaba su
+  // vinculación de Google (loginWithGoogle, que sí es atómica) justo en
+  // esa ventana, el ParentStudent recién creado quedaba sin su
+  // UserStudent puente, huérfano de forma permanente (los logins
+  // posteriores del padre son idempotentes y no vuelven a recorrer este
+  // bridge). Ahora todo va en una transacción y userId se relee FRESCO
+  // (tx.parent.findUnique) justo antes de decidir, nunca desde un valor
+  // capturado fuera de la transacción.
   async createParentStudentLink(schoolId: bigint, dto: CreateParentStudentLinkDto) {
-    // Verificar que el padre pertenezca al colegio
+    // Verificar que el padre pertenezca al colegio (solo existencia/
+    // ownership — el userId de este objeto NO se usa para el bridge).
     await this.getParentOwned(schoolId, BigInt(dto.parentId));
     // Verificar que el alumno pertenezca al colegio
     await this.getStudentOwned(schoolId, BigInt(dto.studentId));
@@ -636,13 +647,41 @@ export class AdminService {
       throw new ConflictException('El padre ya está vinculado a este alumno');
     }
 
-    return this.prisma.parentStudent.create({
-      data: {
-        parentId: BigInt(dto.parentId),
-        studentId: BigInt(dto.studentId),
-        relationship: dto.relationship,
-        isPrimary: dto.isPrimary ?? false,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const link = await tx.parentStudent.create({
+        data: {
+          parentId: BigInt(dto.parentId),
+          studentId: BigInt(dto.studentId),
+          relationship: dto.relationship,
+          isPrimary: dto.isPrimary ?? false,
+        },
+      });
+
+      // Puente ParentStudent → UserStudent: todo el acceso real de la app
+      // (asistencia, notas, pagos, notificaciones — ver AuthService y los
+      // *.service.ts que consultan userStudent) se resuelve por
+      // UserStudent, no por ParentStudent. Lectura fresca dentro de la
+      // misma transacción del create — ver nota de IM-8 arriba.
+      const freshParent = await tx.parent.findUnique({
+        where: { id: BigInt(dto.parentId) },
+        select: { userId: true },
+      });
+      if (freshParent?.userId != null) {
+        await tx.userStudent.upsert({
+          where: {
+            userId_studentId: { userId: freshParent.userId, studentId: BigInt(dto.studentId) },
+          },
+          create: {
+            userId: freshParent.userId,
+            studentId: BigInt(dto.studentId),
+            relationship: dto.relationship,
+            isPrimary: dto.isPrimary ?? false,
+          },
+          update: {},
+        });
+      }
+
+      return link;
     });
   }
 
@@ -656,10 +695,28 @@ export class AdminService {
           { student: { schoolId } },
         ],
       },
-      select: { id: true },
+      select: { id: true, parentId: true, studentId: true },
     });
     if (!link) throw new NotFoundException('Vínculo no encontrado');
-    return this.prisma.parentStudent.delete({ where: { id } });
+
+    // Espejo inverso: si este vínculo tenía su UserStudent puente (ver
+    // createParentStudentLink), eliminarlo también — de lo contrario el
+    // padre conserva acceso a un alumno que el colegio acaba de desvincular.
+    // userId se relee FRESCO dentro de la transacción (mismo razonamiento
+    // de IM-8 que en createParentStudentLink) en vez de confiar en un
+    // valor capturado en el findFirst de arriba.
+    return this.prisma.$transaction(async (tx) => {
+      const freshParent = await tx.parent.findUnique({
+        where: { id: link.parentId },
+        select: { userId: true },
+      });
+      if (freshParent?.userId != null) {
+        await tx.userStudent.deleteMany({
+          where: { userId: freshParent.userId, studentId: link.studentId },
+        });
+      }
+      return tx.parentStudent.delete({ where: { id } });
+    });
   }
 
   // ─────────────────────────────────────────────────────────

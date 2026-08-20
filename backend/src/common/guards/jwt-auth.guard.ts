@@ -48,11 +48,24 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
   // handleRequest se llama después de que passport valida el token.
   // Si hay error o no hay usuario → lanzamos 401
+  //
+  // code: 'SESSION_TOKEN_EXPIRED' (hallazgo H-01) — este guard es el único
+  // punto de entrada para TODOS los 401 de sesión KOLEXA (está registrado
+  // como APP_GUARD global en AuthModule). Flutter usa este `code` exacto
+  // para decidir si intenta un refresh — nunca inspecciona el texto de
+  // `message`. Sin este campo, el AuthInterceptor no tenía forma de
+  // distinguir "mi JWT expiró" de "el token de Google Classroom expiró"
+  // (ambos backends usaban la palabra "token" en el mensaje humano), lo que
+  // producía refreshes innecesarios e incluso logouts forzados por errores
+  // de Classroom que no tenían nada que ver con la sesión KOLEXA.
   handleRequest(err: any, user: any) {
     if (err || !user) {
-      throw new UnauthorizedException(
-        'Token inválido o expirado. Por favor inicia sesión nuevamente.',
-      );
+      throw new UnauthorizedException({
+        statusCode: 401,
+        code: 'SESSION_TOKEN_EXPIRED',
+        message: 'Token inválido o expirado. Por favor inicia sesión nuevamente.',
+        error: 'Unauthorized',
+      });
     }
     return user; // el usuario queda disponible en request.user
   }

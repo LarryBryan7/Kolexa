@@ -60,6 +60,16 @@ export class GradesService {
   // ── setGrade ──────────────────────────────────────────────
   // El profesor registra o actualiza la nota de un alumno.
   // Upsert: crea si no existe, actualiza si ya hay una nota.
+  //
+  // Hallazgo BL-5 de la auditoría: solo se validaba que student/course/
+  // period existieran, nunca que el teacherId autenticado realmente
+  // dictara ese curso — cualquier autenticado (incluido un padre) podía
+  // modificar la nota de cualquier alumno de cualquier colegio. Ahora se
+  // exige que exista un ClassroomCourse{classroom del alumno, course}
+  // cuyo teacherId sea exactamente el usuario autenticado — esto además
+  // cierra el caso cross-colegio sin necesidad de un chequeo de schoolId
+  // aparte: un docente nunca está asignado como teacherId en un
+  // ClassroomCourse de un colegio que no es el suyo.
   async setGrade(
     data: {
       studentId: number;
@@ -81,6 +91,23 @@ export class GradesService {
     if (!student) throw new NotFoundException('Alumno no encontrado');
     if (!course) throw new NotFoundException('Curso no encontrado');
     if (!period) throw new NotFoundException('Periodo no encontrado');
+
+    const currentYear = new Date().getFullYear();
+    const enrollment = await this.prisma.studentEnrollment.findFirst({
+      where: { studentId: data.studentId, academicYear: currentYear, isActive: true },
+    });
+    if (!enrollment) {
+      throw new ForbiddenException('No dictas este curso a este alumno');
+    }
+
+    const classroomCourse = await this.prisma.classroomCourse.findUnique({
+      where: {
+        classroomId_courseId: { classroomId: enrollment.classroomId, courseId: data.courseId },
+      },
+    });
+    if (!classroomCourse || classroomCourse.teacherId !== teacherId) {
+      throw new ForbiddenException('No dictas este curso a este alumno');
+    }
 
     return this.prisma.grade.upsert({
       where: {

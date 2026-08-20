@@ -147,10 +147,21 @@ export class AuthService {
   //     ParentStudent, UserStudent, schoolId). Eso es Fase 2.
   //   - El usuario se crea con un passwordHash aleatorio (imposible de conocer),
   //     por lo que el login por email/password es imposible para cuentas Google.
+  // ── loginWithGoogle ───────────────────────────────────────
+  // Login de padres con Google, condicionado a una invitación válida del
+  // colegio (SchoolInvitation con parentId). schoolId, parentId y el rol
+  // NUNCA vienen del cliente — se derivan exclusivamente de la invitación
+  // y de las relaciones ya existentes en BD.
+  //
+  // Casos de vinculación de Parent (ver sección "9. PARENT LINK IDEMPOTENTE"
+  // del diseño aprobado):
+  //   A) Parent.userId === null            → vincular (flujo nuevo)
+  //   B) Parent.userId === este mismo User → idempotente, no reescribir,
+  //                                           no rechazar (doble-tap/retry)
+  //   C) Parent.userId === otro User       → rechazar, SIEMPRE
   async loginWithGoogle(dto: GoogleLoginDto) {
-    // 1. Validar el ID Token con Google.
-    //    OAuth2Client.verifyIdToken() verifica: firma, issuer (accounts.google.com),
-    //    audience (GOOGLE_CLIENT_ID) y expiración. Devuelve el payload decodificado.
+    // 1. Validar el ID Token con Google — SIN CAMBIOS respecto a la
+    //    validación criptográfica original (firma, issuer, audience, exp).
     const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
     if (!clientId) {
       throw new UnauthorizedException('Google Sign-In no está configurado');
@@ -165,15 +176,50 @@ export class AuthService {
       });
       payload = ticket.getPayload();
     } catch (err) {
-      // Token inválido, expirado o con audience incorrecto.
       throw new UnauthorizedException('El ID Token de Google es inválido o ha expirado');
     }
 
     if (!payload || !payload.sub || !payload.email) {
       throw new UnauthorizedException('El ID Token de Google no contiene datos válidos');
     }
+    // El único factor de identidad de este flujo es el email del token
+    // contra el email de la invitación (ver validación más abajo). Google
+    // permite crear una cuenta con un email ajeno aún no confirmado
+    // (email_verified: false) — sin este chequeo, un atacante podría
+    // registrar una cuenta Google con el email del padre invitado y
+    // reclamar la invitación sin ser dueño real de ese correo (hallazgo B-3
+    // de la auditoría).
+    if (payload.email_verified !== true) {
+      throw new UnauthorizedException('INVITATION_EMAIL_MISMATCH');
+    }
+    const googleEmail = (payload.email as string).trim().toLowerCase();
 
-    // 2. Buscar el usuario por googleSub.
+    // 2. Invitación obligatoria para el flujo de padre. No se crea NINGÚN
+    //    User antes de validar esto — evita cuentas "flotantes" sin colegio.
+    if (!dto.invitationToken) {
+      throw new UnauthorizedException('INVITATION_REQUIRED');
+    }
+
+    const invitation = await this.prisma.schoolInvitation.findUnique({
+      where: { token: dto.invitationToken },
+    });
+    if (!invitation) throw new NotFoundException('INVITATION_NOT_FOUND');
+
+    // Validación estructural: la invitación debe ser de tipo Parent.
+    const parentRole = await this.prisma.role.findUnique({
+      where: { name: 'parent' },
+      select: { id: true },
+    });
+    if (!parentRole || invitation.roleId !== parentRole.id || !invitation.parentId) {
+      throw new BadRequestException('INVITATION_INVALID_ROLE');
+    }
+
+    const parentRecord = await this.prisma.parent.findUnique({ where: { id: invitation.parentId } });
+    if (!parentRecord || parentRecord.schoolId !== invitation.schoolId) {
+      throw new BadRequestException('INVITATION_INVALID_ROLE');
+    }
+
+    // 3. Buscar el usuario por googleSub (fuente de verdad del token validado).
     const existing = await this.prisma.user.findUnique({
       where: { googleSub: payload.sub },
       select: {
@@ -181,65 +227,210 @@ export class AuthService {
         needsPasswordChange: true, isActive: true, deletedAt: true,
       },
     });
+    if (existing && (!existing.isActive || existing.deletedAt)) {
+      throw new UnauthorizedException('La cuenta está inactiva o ha sido eliminada');
+    }
 
-    let user;
-    if (existing) {
-      // Cuenta Google ya registrada.
-      if (!existing.isActive || existing.deletedAt) {
-        throw new UnauthorizedException('La cuenta está inactiva o ha sido eliminada');
+    let user = existing;
+
+    // 4. Ramificación por el estado de Parent.userId — Casos A/B/C.
+    if (parentRecord.userId !== null) {
+      if (existing && parentRecord.userId === existing.id) {
+        // Caso B — ya vinculado a ESTE mismo usuario (doble-tap o reintento
+        // de red tras un éxito previo). Idempotente: no se toca la BD de
+        // nuevo, no se valida usedAt/expiresAt/email otra vez — el estado
+        // deseado ya existe. Se continúa directo a generar la sesión.
+        user = existing;
+      } else {
+        // Caso C — vinculado a otro usuario. Rechazar siempre, sin excepción.
+        throw new ConflictException('INVITATION_ALREADY_USED');
       }
-      user = existing;
     } else {
-      // 3. Cuenta nueva: crear el User con los datos del token validado.
-      //    passwordHash = hash de una cadena aleatoria → login por password imposible.
-      const randomPassword = crypto.randomBytes(32).toString('hex');
-      const passwordHash = await bcrypt.hash(randomPassword, 10);
+      // Caso A — todavía sin vincular. Aquí sí aplican las validaciones
+      // de consumo de la invitación (no aplican en el Caso B idempotente,
+      // porque usedAt/expiresAt ya reflejan el consumo del intento exitoso
+      // anterior, no serían motivo de rechazo real).
+      if (invitation.usedAt) throw new ConflictException('INVITATION_ALREADY_USED');
+      if (invitation.expiresAt < new Date()) throw new BadRequestException('INVITATION_EXPIRED');
 
-      // Buscar el rol 'parent' (dato de referencia).
-      const parentRole = await this.prisma.role.findUnique({
-        where: { name: 'parent' },
-        select: { id: true },
-      });
-      if (!parentRole) {
-        throw new UnauthorizedException('El rol de padre no está configurado');
+      // Regla de identidad del padre: email obligatorio, coincidencia exacta
+      // normalizada. Nunca se permite elegir qué Parent reclamar.
+      if (!invitation.email) {
+        throw new BadRequestException('INVITATION_INVALID_ROLE');
+      }
+      if (invitation.email.trim().toLowerCase() !== googleEmail) {
+        throw new UnauthorizedException('INVITATION_EMAIL_MISMATCH');
       }
 
-      // Crear usuario + rol parent (schoolId null: sin vinculación institucional en Fase 1).
-      try {
-        user = await this.prisma.$transaction(async (tx) => {
-          const created = await tx.user.create({
-            data: {
-              email: payload.email,
-              passwordHash,
-              firstName: payload.given_name ?? '',
-              lastName: payload.family_name ?? '',
-              avatar: payload.picture ?? null,
-              googleSub: payload.sub,
-              isActive: true,
+      // Hash de contraseña aleatoria — calculado ANTES de entrar a la
+      // transacción (hallazgo I-2 de la auditoría). bcrypt es CPU-bound
+      // (~60-100ms) y el pool de conexiones a Postgres es pequeño
+      // (connection_limit=5 en Supabase); mantener una conexión reservada
+      // mientras la CPU hashea desperdicia el recurso más escaso del
+      // sistema. Solo se calcula si hace falta crear un User nuevo (no hay
+      // `user` conocido por googleSub) — si dos requests concurrentes del
+      // MISMO googleSub llegan aquí, ambas calculan un hash y una se
+      // descarta al perder la carrera de creación (mismo trabajo total que
+      // antes, solo que ya no reteniendo una conexión de BD mientras corre).
+      let precomputedPasswordHash: string | undefined;
+      if (!user) {
+        const randomPassword = crypto.randomBytes(32).toString('hex');
+        precomputedPasswordHash = await bcrypt.hash(randomPassword, 10);
+      }
+
+      // 5. Transacción — todo o nada. Crear/reutilizar User, UserRole,
+      //    vincular Parent y consumir la invitación de forma atómica.
+      //
+      // runLinkingTransaction() recibe el User ya conocido (o null si hay
+      // que crearlo) y hace TODO en una transacción. Importante: si
+      // tx.user.create() falla por P2002 (choque de unicidad), Postgres
+      // marca la transacción ENTERA como abortada — ninguna consulta
+      // posterior dentro de esa misma transacción puede ejecutarse, ni
+      // siquiera un SELECT de verificación. Por eso la recuperación de la
+      // carrera NO puede intentarse dentro de la transacción fallida: hay
+      // que dejarla abortar, releer fuera (con this.prisma, no tx) y
+      // reintentar en una transacción NUEVA — eso es lo que hace el bloque
+      // try/catch de más abajo, envolviendo la llamada. En el reintento
+      // `knownUser` ya viene resuelto (el ganador de la carrera), así que
+      // el hash precalculado simplemente no se usa — no hace falta
+      // recalcularlo ni volver a tocar bcrypt.
+      const runLinkingTransaction = async (knownUser: typeof user) => {
+        return this.prisma.$transaction(async (tx) => {
+          let txUser = knownUser;
+          if (!txUser) {
+            txUser = await tx.user.create({
+              data: {
+                // googleEmail (trim+lowercase), no payload.email crudo —
+                // hallazgo IM-7: este User se creaba con el email TAL
+                // CUAL lo mandaba el token de Google, inconsistente con
+                // googleEmail (ya normalizado) que se usó para todas las
+                // comparaciones de arriba.
+                email: googleEmail,
+                passwordHash: precomputedPasswordHash!,
+                firstName: payload.given_name ?? '',
+                lastName: payload.family_name ?? '',
+                avatar: payload.picture ?? null,
+                googleSub: payload.sub,
+                isActive: true,
+              },
+            });
+          }
+
+          await tx.userRole.upsert({
+            where: {
+              userId_roleId_schoolId: {
+                userId: txUser.id,
+                roleId: invitation.roleId,
+                schoolId: invitation.schoolId,
+              },
             },
+            create: { userId: txUser.id, roleId: invitation.roleId, schoolId: invitation.schoolId },
+            update: {},
           });
 
-          await tx.userRole.create({
-            data: { userId: created.id, roleId: parentRole.id, schoolId: null },
+          // Guarda atómica #1 — vincular Parent. Bajo concurrencia real
+          // (dos peticiones del MISMO usuario, ambas leyeron userId=null
+          // antes de que cualquiera confirmara), la perdedora de este
+          // UPDATE puede en realidad haber perdido contra SÍ MISMA — se
+          // relee antes de decidir si es un error real (Caso C) o una
+          // carrera ganada por la petición gemela (no debe producir error).
+          const linked = await tx.parent.updateMany({
+            where: { id: invitation.parentId!, userId: null },
+            data: { userId: txUser.id, linkStatus: 'linked' },
           });
+          if (linked.count === 0) {
+            const current = await tx.parent.findUnique({
+              where: { id: invitation.parentId! },
+              select: { userId: true },
+            });
+            if (current?.userId !== txUser.id) {
+              throw new ConflictException('INVITATION_ALREADY_USED');
+            }
+            // Ganamos nosotros mismos en la petición gemela — continuar.
+          }
 
-          return created;
+          // Puente ParentStudent → UserStudent. Todo el acceso real de la
+          // app (asistencia, notas, pagos, notificaciones, lista de hijos
+          // del login — ver _loadStudentsForLogin y los *.service.ts que
+          // consultan userStudent) se resuelve por UserStudent, no por
+          // ParentStudent. Sin este puente el padre queda vinculado pero
+          // no ve nada. skipDuplicates cubre tanto el reintento de la
+          // petición gemela como una vinculación ya bridgeada por
+          // AdminService.createParentStudentLink si el colegio agregó un
+          // hijo después de que este Parent ya estuviera vinculado.
+          const parentStudents = await tx.parentStudent.findMany({
+            where: { parentId: invitation.parentId! },
+            select: { studentId: true, relationship: true, isPrimary: true },
+          });
+          if (parentStudents.length > 0) {
+            await tx.userStudent.createMany({
+              data: parentStudents.map((ps) => ({
+                userId: txUser!.id,
+                studentId: ps.studentId,
+                relationship: ps.relationship,
+                isPrimary: ps.isPrimary,
+              })),
+              skipDuplicates: true,
+            });
+          }
+
+          // Guarda atómica #2 — consumir la invitación. Mismo razonamiento:
+          // si ya está usada pero el Parent quedó vinculado a este mismo
+          // usuario (verificado arriba), es la petición gemela ganando
+          // primero, no un error real.
+          const claimed = await tx.schoolInvitation.updateMany({
+            where: { id: invitation.id, usedAt: null },
+            data: { usedAt: new Date() },
+          });
+          if (claimed.count === 0) {
+            const currentInv = await tx.schoolInvitation.findUnique({
+              where: { id: invitation.id },
+              select: { usedAt: true },
+            });
+            if (!currentInv?.usedAt) {
+              throw new ConflictException('INVITATION_ALREADY_USED');
+            }
+            // Idempotente — la petición gemela ya la consumió, no relanzar.
+          }
+
+          return txUser;
         });
+      };
+
+      try {
+        user = await runLinkingTransaction(user);
       } catch (err: any) {
-        // P2002 = violación de unicidad. Ocurre si ya existe un User con el
-        // mismo email (registrado por email/password) pero sin googleSub.
-        // La vinculación de cuentas (unir Google con la cuenta existente) es
-        // parte de la Fase 2; en Fase 1 devolvemos un error claro.
-        if (err?.code === 'P2002') {
-          throw new ConflictException(
-            'Ya existe una cuenta con este correo. Inicia sesión con tu correo y contraseña.',
-          );
+        // P2002 en la creación del User = otra petición concurrente con el
+        // MISMO googleSub ganó la carrera de creación (doble-tap real).
+        // Releemos FUERA de la transacción ya abortada y reintentamos UNA
+        // vez con el User que ya existe — a partir de ahí el resto del
+        // flujo (UserRole/Parent/invitación) es idempotente por diseño.
+        if (err?.code === 'P2002' && !user) {
+          const raceWinner = await this.prisma.user.findUnique({ where: { googleSub: payload.sub } });
+          if (raceWinner) {
+            user = await runLinkingTransaction(raceWinner);
+          } else {
+            // El P2002 fue por email duplicado, no por googleSub — conflicto
+            // real (ya existe una cuenta con este correo, sin Google),
+            // no una carrera. Unir cuentas es un caso fuera de alcance aquí.
+            throw new ConflictException(
+              'Ya existe una cuenta con este correo. Inicia sesión con tu correo y contraseña.',
+            );
+          }
+        } else {
+          throw err;
         }
-        throw err;
       }
     }
 
-    // 4. Cargar roles + students (mismo mecanismo que login).
+    if (!user) {
+      // No debería ocurrir (defensivo): si llegamos aquí sin user, algo en
+      // la lógica de arriba está mal — mejor fallar explícito que devolver
+      // una sesión sin dueño.
+      throw new UnauthorizedException('No se pudo resolver la cuenta de usuario');
+    }
+
+    // 6. Cargar roles + students (mismo mecanismo que login).
     const [rolesData, studentsData] = await Promise.all([
       this._loadRolesForLogin(user.id),
       this._loadStudentsForLogin(user.id),
@@ -250,7 +441,7 @@ export class AuthService {
       .filter((n): n is string => n !== null && n !== undefined);
     const schoolId = rolesData[0]?.schoolId ?? null;
 
-    // 5. Generar tokens + guardar push token (en paralelo, igual que login).
+    // 7. Generar tokens + guardar push token (en paralelo, igual que login).
     const [tokens] = await Promise.all([
       this.generateTokens(user, roles, schoolId),
       (async () => {
@@ -264,7 +455,7 @@ export class AuthService {
       })(),
     ]);
 
-    // 6. Cargar hijos si es padre (misma estructura que login).
+    // 8. Cargar hijos si es padre (misma estructura que login).
     const isParent = rolesData.some((r) => r.roleName === 'parent');
     let children: {
       id: string; firstName: string; lastName: string; code: string;
@@ -282,7 +473,7 @@ export class AuthService {
       }));
     }
 
-    // 7. Devolver la misma estructura de respuesta que login.
+    // 9. Devolver la misma estructura de respuesta que login.
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -333,9 +524,23 @@ export class AuthService {
   }
 
   // ── LOGOUT ─────────────────────────────────────────────
-  async logout(userId: bigint, firebaseToken?: string) {
+  // Hallazgo IM-1 de la auditoría: el comentario de generateTokens() decía
+  // "Guardar el refresh token en BD para poder invalidarlo en logout", pero
+  // logout() nunca tocaba userToken — un refresh token seguía siendo válido
+  // hasta 7 días después de "cerrar sesión". Si el cliente envía el
+  // refreshToken de ESTA sesión, se revoca solo ese (no afecta otros
+  // dispositivos); si no lo envía, se revocan todos los refresh tokens del
+  // usuario (más seguro que no revocar ninguno).
+  async logout(userId: bigint, firebaseToken?: string, refreshToken?: string) {
     if (firebaseToken) {
       await this.prisma.pushToken.deleteMany({ where: { userId, token: firebaseToken } });
+    }
+    if (refreshToken) {
+      await this.prisma.userToken.deleteMany({
+        where: { userId, tokenType: 'refresh', token: refreshToken },
+      });
+    } else {
+      await this.prisma.userToken.deleteMany({ where: { userId, tokenType: 'refresh' } });
     }
     return { message: 'Sesión cerrada correctamente' };
   }
@@ -350,6 +555,15 @@ export class AuthService {
     if (!inv) throw new NotFoundException('Invitación no encontrada');
     if (inv.usedAt) throw new ConflictException('Esta invitación ya fue utilizada');
     if (inv.expiresAt < new Date()) throw new BadRequestException('Esta invitación ha expirado');
+    // Las invitaciones de Parent exigen verificación de identidad con Google
+    // (ver AuthService.loginWithGoogle) — no pueden consumirse por este
+    // flujo de email/password, o se saltearía esa verificación por completo.
+    if (inv.parentId) {
+      throw new BadRequestException('Esta invitación requiere iniciar sesión con Google');
+    }
+    if (!inv.email) {
+      throw new BadRequestException('Esta invitación no tiene un email asociado');
+    }
 
     const existing = await this.prisma.user.findFirst({
       where: { email: inv.email, deletedAt: null },
@@ -397,10 +611,17 @@ export class AuthService {
         });
       }
 
-      await tx.schoolInvitation.update({
-        where: { id: inv.id },
+      // Consumo atómico — protege contra dos peticiones concurrentes con el
+      // mismo token (doble-click, dos dispositivos, reintento de red). Solo
+      // una puede tener éxito; la otra debe fallar limpio, sin estado
+      // parcial. Este es el mismo patrón usado en loginWithGoogle().
+      const claimed = await tx.schoolInvitation.updateMany({
+        where: { id: inv.id, usedAt: null },
         data: { usedAt: new Date() },
       });
+      if (claimed.count === 0) {
+        throw new ConflictException('Esta invitación ya fue utilizada');
+      }
 
       return user;
     });
@@ -454,6 +675,19 @@ export class AuthService {
       where: { token: refreshToken, tokenType: 'refresh' },
     });
     if (!stored) throw new UnauthorizedException('Sesión cerrada. Inicia sesión nuevamente');
+
+    // Hallazgo IM-2 de la auditoría: antes no se validaba isActive/deletedAt
+    // aquí — un usuario desactivado (o su token robado) podía seguir
+    // obteniendo access tokens nuevos mientras su refresh token no expirara
+    // (hasta 7 días), aunque JwtStrategy.validate() lo bloqueara en el
+    // siguiente request. Se corta acá, en el origen del access token nuevo.
+    const user = await this.prisma.user.findFirst({
+      where: { id: BigInt(payload.sub), isActive: true, deletedAt: null },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    }
 
     // Generar nuevo access token
     // Se propaga el schoolId del refresh token (si existe) para que el access

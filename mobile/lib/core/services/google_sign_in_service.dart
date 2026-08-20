@@ -36,7 +36,7 @@ class GoogleSignInService {
   // NOTA: para el piloto, reemplaza este valor por el Client ID real
   // de tu proyecto de Google Cloud. No lo subas a git si es sensible.
   static const String _serverClientId =
-      'TU_SERVER_CLIENT_ID.apps.googleusercontent.com';
+      '171691080214-1t7108i5q0997upk7l6n7tq2ssr3a7r3.apps.googleusercontent.com';
 
   // Instancia de GoogleSignIn configurada con el server client ID.
   // 'webClientId' es el ID del cliente web/servidor; es el que permite

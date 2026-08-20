@@ -1151,19 +1151,27 @@ model PushToken {
 model SchoolInvitation {
   id        BigInt    @id @default(autoincrement())
   schoolId  BigInt    @map("school_id")
-  email     String    @db.VarChar(128)
+  // email: obligatorio para invitaciones de Parent (se valida en el service,
+  // no aquí, porque las invitaciones genéricas de otros roles pueden no
+  // necesitarlo). Nullable a nivel de columna para no romper compatibilidad.
+  email     String?   @db.VarChar(128)
   roleId    Int       @map("role_id")
   // token único enviado por email/link de invitación
   token     String    @unique @db.VarChar(64)
   invitedBy BigInt?   @map("invited_by")
+  // parentId: liga la invitación a un Parent institucional concreto.
+  // Nullable porque las invitaciones genéricas (ej. docentes) no aplican.
+  parentId  BigInt?   @map("parent_id")
   expiresAt DateTime  @map("expires_at") @db.Timestamptz()
   usedAt    DateTime? @map("used_at") @db.Timestamptz()
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz()
 
-  school  School @relation(fields: [schoolId], references: [id])
-  role    Role   @relation(fields: [roleId], references: [id])
-  inviter User?  @relation("InvitationSender", fields: [invitedBy], references: [id])
+  school  School  @relation(fields: [schoolId], references: [id])
+  role    Role    @relation(fields: [roleId], references: [id])
+  inviter User?   @relation("InvitationSender", fields: [invitedBy], references: [id])
+  parent  Parent? @relation(fields: [parentId], references: [id], onDelete: SetNull)
 
+  @@index([parentId])
   @@map("school_invitations")
 }
 
@@ -1388,6 +1396,7 @@ model Parent {
   school  School          @relation(fields: [schoolId], references: [id])
   user    User?           @relation(fields: [userId], references: [id])
   students ParentStudent[]
+  invitations SchoolInvitation[]
 
   @@unique([schoolId, dni])
   @@index([schoolId, isActive])

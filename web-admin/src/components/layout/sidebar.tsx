@@ -7,6 +7,7 @@ import {
   Users,
   UserCog,
   GraduationCap,
+  Contact,
   Upload,
   LogOut,
 } from 'lucide-react';
@@ -23,6 +24,7 @@ const navItems = [
   { to: '/usuarios', label: 'Usuarios', icon: Users, end: false },
   { to: '/docentes', label: 'Docentes', icon: UserCog, end: false },
   { to: '/alumnos', label: 'Alumnos', icon: GraduationCap, end: false },
+  { to: '/padres', label: 'Padres', icon: Contact, end: false },
   { to: '/importar', label: 'Importar', icon: Upload, end: false },
 ];
 

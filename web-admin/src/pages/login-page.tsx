@@ -18,7 +18,7 @@ const loginSchema = z.object({
 type LoginForm = z.infer<typeof loginSchema>;
 
 export function LoginPage() {
-  const { login, isAuthenticated } = useAuth();
+  const { login, logout, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
@@ -43,6 +43,12 @@ export function LoginPage() {
       const user = await login(values.email, values.password);
       const hasAdminRole = user.roles?.some((r) => r.role === 'school_admin');
       if (!hasAdminRole) {
+        // Hallazgo IM-9: login() ya guardó el token y marcó
+        // isAuthenticated=true — sin este logout(), el usuario quedaba con
+        // sesión completa y navegación libre por todo el layout admin
+        // (aunque cada llamada real a datos recibiera 403 del backend).
+        // logout() limpia token+user y deja el estado no autenticado.
+        logout();
         toast({
           title: 'Acceso restringido',
           description: 'Esta cuenta no tiene permisos de administrador de institución.',

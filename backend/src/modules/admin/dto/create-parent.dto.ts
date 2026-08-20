@@ -1,4 +1,5 @@
 import { IsEmail, IsOptional, IsString, MaxLength } from 'class-validator';
+import { NormalizeEmail } from '../../../common/decorators/normalize-email.decorator';
 
 // POST /admin/parents — crea la información INSTITUCIONAL de un padre/apoderado.
 // NO crea cuenta de usuario ni contraseña: el padre crea/activa su cuenta desde
@@ -25,6 +26,7 @@ export class CreateParentDto {
   phone?: string;
 
   @IsOptional()
+  @NormalizeEmail()
   @IsEmail()
   @MaxLength(128)
   email?: string;

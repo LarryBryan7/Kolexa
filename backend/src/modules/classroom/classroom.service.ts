@@ -123,6 +123,25 @@ export class ClassroomService {
     return { type: 'student', id: String(parsed.studentId) };
   }
 
+  // ── Ownership del padre sobre un alumno (hallazgo BL-6) ──
+  // Ninguno de los endpoints student/:studentId/* validaba que el alumno
+  // perteneciera al padre autenticado — cualquier usuario con JWT válido
+  // podía leer/sincronizar Classroom de un alumno ajeno (incluso de otro
+  // colegio) con solo cambiar el studentId en la URL. Este guard se llama
+  // desde el controller, ANTES de delegar a los métodos existentes de este
+  // service (que quedan sin tocar — ver nota de alcance de la auditoría
+  // sobre no modificar la lógica de OAuth/sync salvo lo estrictamente
+  // necesario para cerrar el hallazgo de autorización).
+  async assertStudentOwnedByParent(userId: bigint, studentId: bigint): Promise<void> {
+    const rel = await this.prisma.userStudent.findFirst({
+      where: { userId, studentId },
+      select: { id: true },
+    });
+    if (!rel) {
+      throw new ForbiddenException('No tienes acceso a este alumno');
+    }
+  }
+
   // ── Verifica si el docente tiene cuenta conectada ────────
   async isTeacherConnected(userId: bigint): Promise<boolean> {
     const token = await this.prisma.teacherGoogleToken.findUnique({ where: { userId } });
@@ -569,7 +588,17 @@ export class ClassroomService {
   }
 
   // ── Retorna el roster de alumnos desde la BD (sincronizado en sync) ─
-  async getParentTodaySummary() {
+  // studentId es OBLIGATORIO y su ownership se valida en el controller
+  // (assertStudentOwnedByParent) antes de llegar aquí.
+  //
+  // Antes (hallazgo BL-1 de la auditoría): el endpoint no recibía ningún
+  // studentId y buscaba "la sesión de asistencia más reciente de TODA la
+  // base de datos" (gcAttendanceSession.findFirst sin ningún where de
+  // colegio/alumno) — devolvía datos de asistencia de CUALQUIER colegio a
+  // cualquier padre autenticado, sin necesidad de conocer ningún ID. Ahora
+  // se ubica la sesión a través del/los GcCourseStudent que pertenecen
+  // específicamente a este alumno.
+  async getParentTodaySummary(studentId: bigint) {
     // Todo en hora Lima (UTC-5) para que coincida con los horarios guardados
     const LIMA_OFFSET_MS = 5 * 60 * 60 * 1000;
     const nowLima = new Date(Date.now() - LIMA_OFFSET_MS);
@@ -577,18 +606,33 @@ export class ClassroomService {
     const todayStr = nowLima.toISOString().split('T')[0];
     const todayDate = new Date(todayStr);
 
-    const session = await this.prisma.gcAttendanceSession.findFirst({
-      where: { date: todayDate },
-      orderBy: { createdAt: 'desc' },
-      include: { records: { select: { status: true } } },
+    const gcCourseStudents = await this.prisma.gcCourseStudent.findMany({
+      where: { studentId },
+      select: { id: true },
     });
+
+    const record = gcCourseStudents.length > 0
+      ? await this.prisma.gcAttendanceRecord.findFirst({
+          where: {
+            studentId: { in: gcCourseStudents.map((s) => s.id) },
+            session: { date: todayDate },
+          },
+          include: { session: true },
+          orderBy: { session: { createdAt: 'desc' } },
+        })
+      : null;
+
+    const session = record?.session ?? null;
 
     const storedPhotoPaths: string[] = session && Array.isArray(session.photoUrls)
       ? (session.photoUrls as string[])
       : [];
     const photoUrls = await this.storage.getSignedUrls(storedPhotoPaths);
     const photoCount = storedPhotoPaths.length;
-    const arrivalStatus: string | null = session?.records[0]?.status ?? null;
+    // record.status es el registro de ESTE alumno específico — antes se
+    // tomaba records[0] de toda la sesión/aula, que no necesariamente
+    // correspondía al alumno consultado.
+    const arrivalStatus: string | null = record?.status ?? null;
 
     let arrivalTime: string | null = null;
     if (session) {

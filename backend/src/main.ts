@@ -28,6 +28,18 @@ async function bootstrap() {
   // Crea la aplicación NestJS usando el módulo raíz (AppModule)
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  // ── Trust proxy (hallazgo IM-4) ─────────────────────────
+  // Railway (y cualquier PaaS con proxy/balanceador delante) reenvía las
+  // peticiones a través de su propio proxy interno — sin esto, Express ve
+  // la IP del proxy de Railway como "el cliente" para TODAS las
+  // peticiones, no la IP real de cada usuario. El rate limiting por IP
+  // (ThrottlerGuard, ver app.module.ts) sin este ajuste bloquearía a
+  // TODOS los usuarios juntos (comparten la IP aparente del proxy) en vez
+  // de limitar a cada uno por separado. `1` = confiar en el primer salto
+  // del proxy (el estándar para PaaS de un solo nivel de proxy como
+  // Railway) y usar X-Forwarded-For para resolver la IP real.
+  app.set('trust proxy', 1);
+
   // Sirve archivos subidos desde la carpeta uploads/ en la ruta /uploads/
   app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
 

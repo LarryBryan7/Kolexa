@@ -124,6 +124,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       final user = await _repository.loginWithGoogle(
         idToken: event.idToken,
+        invitationToken: event.invitationToken,
         firebaseToken: event.firebaseToken,
       );
 

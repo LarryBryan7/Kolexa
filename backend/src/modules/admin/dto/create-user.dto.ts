@@ -6,11 +6,13 @@ import {
   IsIn,
   MaxLength,
 } from 'class-validator';
+import { NormalizeEmail } from '../../../common/decorators/normalize-email.decorator';
 
 // POST /admin/users — crea un usuario (docente o padre) dentro del colegio del admin.
 // El usuario se crea SIN contraseña (needsPasswordChange=true) y se activa mediante
 // el flujo de invitación/activación de KOLEXA (el propio usuario define su contraseña).
 export class CreateUserDto {
+  @NormalizeEmail()
   @IsEmail({}, { message: 'Email inválido' })
   email: string;
 

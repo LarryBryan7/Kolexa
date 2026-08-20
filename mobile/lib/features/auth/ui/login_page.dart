@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
@@ -27,15 +28,17 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   // Credenciales por defecto para el piloto (cuenta demo de Sofía).
   // El usuario puede editarlas antes de iniciar sesión.
-  final _emailController    = TextEditingController(text: 'sofia.mendez@gmail.com');
-  final _passwordController = TextEditingController(text: '123456');
-  final _formKey            = GlobalKey<FormState>();
-  bool _obscurePassword     = true;
+  final _emailController      = TextEditingController(text: 'sofia.mendez@gmail.com');
+  final _passwordController   = TextEditingController(text: '123456');
+  final _invitationController = TextEditingController();
+  final _formKey               = GlobalKey<FormState>();
+  bool _obscurePassword       = true;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _invitationController.dispose();
     super.dispose();
   }
 
@@ -51,17 +54,39 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  // Mensajes de UI para los códigos de error estructurados que devuelve
+  // el backend para el flujo de invitación de padre. Comparación por
+  // IGUALDAD EXACTA — nunca .contains(), para no repetir el bug de
+  // Classroom donde Flutter confundía TOKEN_EXPIRED con una sesión KOLEXA
+  // vencida por hacer un match parcial de substring.
+  static const _invitationErrorMessages = <String, String>{
+    'INVITATION_REQUIRED': 'Ingresa el código que te dio el colegio.',
+    'INVITATION_NOT_FOUND': 'El código no es válido.',
+    'INVITATION_EXPIRED': 'Este código ha vencido. Solicita una nueva invitación al colegio.',
+    'INVITATION_ALREADY_USED': 'Este código ya fue utilizado.',
+    'INVITATION_EMAIL_MISMATCH': 'Usa la cuenta de Google registrada por el colegio.',
+    'INVITATION_INVALID_ROLE': 'No se pudo procesar la invitación. Contacta al colegio.',
+  };
+
   // ── Continuar con Google ─────────────────────────────────
-  // Obtiene el ID Token de Google y lo envía al backend.
-  // El backend lo valida criptográficamente y crea/asigna el rol parent.
+  // Requiere el código de invitación del colegio (obligatorio — sin él el
+  // backend rechaza con INVITATION_REQUIRED antes de crear cualquier
+  // cuenta). Obtiene el ID Token de Google y envía ambos al backend, que
+  // valida todo criptográfica e institucionalmente antes de vincular.
   Future<void> _onGoogleLoginPressed() async {
     FocusScope.of(context).unfocus();
+    final invitationToken = _invitationController.text.trim();
+    if (invitationToken.isEmpty) {
+      _showError(_invitationErrorMessages['INVITATION_REQUIRED']!);
+      return;
+    }
     try {
       final idToken = await GoogleSignInService.instance.signIn();
       if (!mounted) return;
       context.read<AuthBloc>().add(
         GoogleLoginEvent(
           idToken: idToken,
+          invitationToken: invitationToken,
           firebaseToken: PushNotificationsService.instance.fcmToken,
         ),
       );
@@ -70,15 +95,19 @@ class _LoginPageState extends State<LoginPage> {
       // Si el usuario canceló, no mostramos error (es una acción esperada).
       final msg = e.toString().replaceFirst('Exception: ', '');
       if (msg.toLowerCase().contains('cancelado')) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(
-          content: Text(msg),
-          backgroundColor: Theme.of(context).colorScheme.error,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 4),
-        ));
+      _showError(_invitationErrorMessages[msg] ?? msg);
     }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(message),
+        backgroundColor: Theme.of(context).colorScheme.error,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ));
   }
 
   InputDecoration _fieldDecoration({
@@ -126,14 +155,11 @@ class _LoginPageState extends State<LoginPage> {
         listener: (context, state) {
           if (state is AuthAuthenticated) context.go(AppRouter.home);
           if (state is AuthError) {
-            ScaffoldMessenger.of(context)
-              ..hideCurrentSnackBar()
-              ..showSnackBar(SnackBar(
-                content: Text(state.message),
-                backgroundColor: Theme.of(context).colorScheme.error,
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(seconds: 4),
-              ));
+            // state.message llega tal cual del backend (ver AuthBloc._onGoogleLogin
+            // y AuthError). Para los códigos de invitación se mapea por
+            // IGUALDAD EXACTA a un mensaje de UI — cualquier otro mensaje
+            // (ej. "Credenciales incorrectas") se muestra tal cual.
+            _showError(_invitationErrorMessages[state.message] ?? state.message);
           }
         },
         builder: (context, state) {
@@ -309,29 +335,57 @@ class _LoginPageState extends State<LoginPage> {
                       ],
                     ),
 
-                    // ── Continuar con Google ──────────────────
+                    // ── Código de invitación (obligatorio para Google) ──
                     const SizedBox(height: 18),
+                    SizedBox(
+                      height: 52,
+                      child: TextFormField(
+                        controller: _invitationController,
+                        textInputAction: TextInputAction.done,
+                        enabled: !isLoading,
+                        style: const TextStyle(color: _kTextDark, fontSize: 14),
+                        decoration: _fieldDecoration(
+                          hint: 'Código de invitación del colegio',
+                          icon: Icons.key_outlined,
+                        ),
+                      ),
+                    ),
+
+                    // ── Continuar con Google ──────────────────
+                    const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       height: 48,
-                      child: OutlinedButton.icon(
+                      child: OutlinedButton(
                         style: OutlinedButton.styleFrom(
                           backgroundColor: Colors.white,
                           foregroundColor: _kTextDark,
                           side: const BorderSide(color: _kBorder),
                           elevation: 0,
+                          padding: EdgeInsets.zero,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(24),
                           ),
                         ),
                         onPressed: isLoading ? null : _onGoogleLoginPressed,
-                        icon: const Icon(Icons.g_mobiledata, color: _kPrimary, size: 24),
-                        label: const Text(
-                          'Continuar con Google',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SvgPicture.asset(
+                              'assets/icons/ic_google.svg',
+                              width: 18,
+                              height: 18,
+                            ),
+                            const SizedBox(width: 12),
+                            const Text(
+                              'Continuar con Google',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                                color: _kTextDark,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),

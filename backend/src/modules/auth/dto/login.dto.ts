@@ -13,9 +13,14 @@
 // ============================================================
 
 import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
+import { NormalizeEmail } from '../../../common/decorators/normalize-email.decorator';
 
 export class LoginDto {
   // @IsEmail() verifica que sea un email válido con formato correcto
+  // @NormalizeEmail() (hallazgo IM-7): trim+lowercase antes de comparar
+  // contra la BD — así una cuenta creada con "Test@x.com" (normalizado a
+  // "test@x.com" en escritura) puede loguearse escribiendo "TEST@x.com".
+  @NormalizeEmail()
   @IsEmail({}, { message: 'El email no tiene un formato válido' })
   email: string;
 

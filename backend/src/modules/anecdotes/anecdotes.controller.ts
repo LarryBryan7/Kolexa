@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, ParseIntPipe } from '@nestjs/common';
 import { IsString, IsInt, IsPositive, IsOptional, IsBoolean } from 'class-validator';
 import { AnecdotesService } from './anecdotes.service';
 import { CurrentUser, UserPayload } from '../../common/decorators/current-user.decorator';
@@ -21,13 +21,18 @@ export class AnecdotesController {
     return this.service.create(dto, user.sub);
   }
 
+  // Hallazgo BL-2 de la auditoría: `role` venía de un query param
+  // controlado por el cliente y decidía si se saltaba el ownership check
+  // y si se mostraban anécdotas PRIVADAS — cualquier padre podía llamar
+  // ?role=teacher y ver anécdotas privadas de un alumno ajeno, de
+  // cualquier colegio. Ahora `isTeacher` se deriva de los roles reales
+  // del JWT, nunca de la query string.
   @Get('student/:studentId')
   getForStudent(
     @Param('studentId', ParseIntPipe) studentId: number,
     @CurrentUser() user: UserPayload,
-    @Query('role') role: 'teacher' | 'parent' = 'parent',
   ) {
-    return this.service.getForStudent(studentId, user.sub, role === 'teacher');
+    return this.service.getForStudent(studentId, user.sub, user.roles.includes('teacher'));
   }
 
   @Delete(':id')
