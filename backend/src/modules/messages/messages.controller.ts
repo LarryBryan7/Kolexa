@@ -39,6 +39,7 @@ export class MessagesController {
         parentMessageId: dto.parentMessageId ? BigInt(dto.parentMessageId) : undefined,
       },
       user.sub,
+      user.schoolId,
     );
   }
 

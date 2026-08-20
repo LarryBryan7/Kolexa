@@ -94,6 +94,36 @@ export interface Student {
   _count?: { parents: number };
 }
 
+// ── Padres / Apoderados (información institucional) ──────
+export interface ParentStudentLink {
+  id: string;
+  parentId: string;
+  studentId: string;
+  relationship?: string | null;
+  isPrimary: boolean;
+  student?: {
+    id: string;
+    firstName: string;
+    lastName?: string | null;
+    code?: string | null;
+    dni?: string | null;
+  };
+}
+
+export interface Parent {
+  id: string;
+  firstName: string;
+  lastName?: string | null;
+  dni?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  isActive: boolean;
+  linkStatus: 'pending' | 'linked' | 'unlinked';
+  userId?: string | null;
+  user?: { id: string; email: string; isActive: boolean } | null;
+  students?: ParentStudentLink[];
+}
+
 // ── Importación ────────────────────────────────────────────
 export type ImportRowStatus = 'creada' | 'error' | 'requiere_confirmacion';
 

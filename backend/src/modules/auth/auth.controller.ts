@@ -23,6 +23,7 @@ import {
   HttpStatus,
   BadRequestException,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -42,7 +43,13 @@ export class AuthController {
   // @Public() → no requiere JWT (es el endpoint para obtenerlo)
   // @HttpCode(200) → el status por defecto en POST es 201, pero
   //                  login devuelve 200 (no crea un recurso nuevo)
+  // Hallazgo IM-4: 5 intentos/min por IP. Es el límite estándar de la
+  // industria para login por contraseña (ej. GitHub/AWS Cognito usan
+  // rangos similares) — suficiente para que un usuario real que se
+  // equivoca 2-3 veces no quede bloqueado, pero corta la fuerza bruta
+  // automatizada (miles de intentos/min).
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: LoginDto) {
@@ -52,7 +59,14 @@ export class AuthController {
   }
 
   // ── POST /api/v1/auth/refresh ──────────────────────────
+  // Hallazgo IM-4: 20/min por IP. Más generoso que login/google porque un
+  // hogar con varios dispositivos/hijos en la misma red puede refrescar
+  // varias sesiones cerca en el tiempo (tokens de ~1h, expiran en
+  // ventanas similares) — la deduplicación de refresh concurrente del
+  // cliente (TokenStore, Flutter) ya evita ráfagas artificiales del mismo
+  // dispositivo; este límite es una defensa adicional, no la primera línea.
   @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   refresh(@Body('refreshToken') refreshToken: string) {
@@ -73,7 +87,14 @@ export class AuthController {
   // Login/registro con Google Sign-In (Fase 1).
   // Recibe ÚNICAMENTE el ID Token de Google; el backend lo valida
   // criptográficamente y crea/asigna el rol parent si es una cuenta nueva.
+  // Hallazgo IM-4: 10/min por IP. Más generoso que login (5) porque la
+  // verificación criptográfica del ID Token de Google hace la fuerza
+  // bruta directa inviable (necesitaría tokens firmados por Google) — el
+  // límite aquí es sobre todo defensa contra DoS/costo (cada intento
+  // dispara una verificación contra la API de Google) y contra tanteo del
+  // flujo de invitación (INVITATION_REQUIRED/EMAIL_MISMATCH).
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('google')
   @HttpCode(HttpStatus.OK)
   googleLogin(@Body() dto: GoogleLoginDto) {
@@ -81,13 +102,18 @@ export class AuthController {
   }
 
   // ── POST /api/v1/auth/logout ───────────────────────────
+  // refreshToken (hallazgo IM-1): si el cliente lo envía, se revoca
+  // ESPECÍFICAMENTE esa sesión (no las de otros dispositivos). Si no lo
+  // envía, se revocan todos los refresh tokens del usuario — más seguro
+  // que no revocar nada, que era el comportamiento anterior.
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   logout(
     @CurrentUser() user: UserPayload,
     @Body('firebaseToken') firebaseToken?: string,
+    @Body('refreshToken') refreshToken?: string,
   ) {
-    return this.authService.logout(BigInt(user.sub), firebaseToken);
+    return this.authService.logout(BigInt(user.sub), firebaseToken, refreshToken);
   }
 
   // ── POST /api/v1/auth/change-password ─────────────────

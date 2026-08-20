@@ -51,18 +51,36 @@ export class PaymentsService {
   // ── assignObligations ────────────────────────────────────
   // Asigna una obligación de pago a uno o varios alumnos.
   // Ej: "Asignar la Pensión de Abril a todos los alumnos del Aula 3A"
+  //
+  // Hallazgo BL-3: ni el concepto ni los alumnos se validaban contra el
+  // colegio del staff autenticado — un school_admin (o una cuenta
+  // comprometida) podía asignar obligaciones de pago sobre alumnos de
+  // OTRO colegio adivinando IDs.
   async assignObligations(
     data: {
       conceptId: number;
       studentIds: number[];
       dueDate?: string;
     },
+    schoolId: bigint,
     userId: bigint,
   ) {
     const concept = await this.prisma.paymentConcept.findUnique({
       where: { id: data.conceptId },
     });
     if (!concept) throw new NotFoundException('Concepto de pago no encontrado');
+    if (concept.schoolId !== schoolId) {
+      throw new ForbiddenException('Este concepto de pago no pertenece a tu colegio');
+    }
+
+    const students = await this.prisma.student.findMany({
+      where: { id: { in: data.studentIds } },
+      select: { id: true, schoolId: true },
+    });
+    const belongsToAnotherSchool = students.some((s) => s.schoolId !== schoolId);
+    if (belongsToAnotherSchool || students.length !== data.studentIds.length) {
+      throw new ForbiddenException('Uno o más alumnos no pertenecen a tu colegio');
+    }
 
     // Crear obligaciones para cada alumno (ignorar duplicados)
     const result = await this.prisma.paymentObligation.createMany({
@@ -83,6 +101,10 @@ export class PaymentsService {
 
   // ── recordPayment ─────────────────────────────────────────
   // La tesorería del colegio registra que un pago fue recibido.
+  //
+  // Hallazgo BL-3: no se validaba que la obligación perteneciera al
+  // colegio del staff autenticado — permitía marcar como pagada la deuda
+  // de un alumno de OTRO colegio.
   async recordPayment(
     data: {
       obligationId: number;
@@ -91,12 +113,17 @@ export class PaymentsService {
       reference?: string;    // número de operación/voucher
       notes?: string;
     },
+    schoolId: bigint,
     staffId: bigint,
   ) {
     const obligation = await this.prisma.paymentObligation.findUnique({
       where: { id: data.obligationId },
+      include: { student: { select: { schoolId: true } } },
     });
     if (!obligation) throw new NotFoundException('Obligación de pago no encontrada');
+    if (obligation.student.schoolId !== schoolId) {
+      throw new ForbiddenException('Esta obligación no pertenece a tu colegio');
+    }
     if (obligation.status === 'paid') {
       throw new ConflictException('Esta obligación ya fue pagada');
     }

@@ -81,10 +81,12 @@ class AuthRemoteDataSource {
   //           (misma estructura que login)
   Future<LoginResponse> loginWithGoogle({
     required String idToken,
+    required String invitationToken,
     String? firebaseToken,
   }) async {
     final body = {
       'idToken': idToken,
+      'invitationToken': invitationToken,
       if (firebaseToken != null) 'firebaseToken': firebaseToken,
     };
 
@@ -97,14 +99,21 @@ class AuthRemoteDataSource {
   // ── logout ────────────────────────────────────────────────
   // Notifica al backend que el usuario cerró sesión.
   // El backend elimina el Firebase token para dejar de enviar
-  // notificaciones a este dispositivo.
+  // notificaciones a este dispositivo, y revoca el refreshToken de ESTA
+  // sesión (hallazgo IM-1 — antes el backend no invalidaba nada, así que
+  // un refresh token seguía siendo válido hasta 7 días después de
+  // "cerrar sesión"). Enviarlo aquí revoca solo este dispositivo, no
+  // otras sesiones del mismo usuario.
   //
   // Nota: los tokens JWT del lado del cliente siempre se eliminan
   // en el Repository, independientemente de la respuesta del backend.
-  Future<void> logout() async {
+  Future<void> logout({String? refreshToken}) async {
     // POST /auth/logout (este endpoint requiere JWT — no es @Public)
     // El AuthInterceptor agrega el Bearer token automáticamente
-    await _client.post('auth/logout');
+    await _client.post(
+      'auth/logout',
+      data: refreshToken != null ? {'refreshToken': refreshToken} : null,
+    );
   }
 
   // ── changePassword ────────────────────────────────────────

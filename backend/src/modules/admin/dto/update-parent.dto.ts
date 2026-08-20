@@ -1,4 +1,5 @@
 import { IsEmail, IsOptional, IsString, MaxLength } from 'class-validator';
+import { NormalizeEmail } from '../../../common/decorators/normalize-email.decorator';
 
 // PATCH /admin/parents/:id — actualiza la información institucional del padre.
 // No gestiona contraseñas ni cuentas (eso es de la app móvil).
@@ -24,6 +25,7 @@ export class UpdateParentDto {
   phone?: string;
 
   @IsOptional()
+  @NormalizeEmail()
   @IsEmail()
   @MaxLength(128)
   email?: string;

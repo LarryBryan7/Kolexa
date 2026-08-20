@@ -1,0 +1,366 @@
+import { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Plus, Pencil, Send, Copy, Check } from 'lucide-react';
+import { PageHeader } from '@/components/page-header';
+import { LoadingState } from '@/components/loading-state';
+import { ErrorState } from '@/components/error-state';
+import { DataTable } from '@/components/data-table';
+import { StatusBadge } from '@/components/status-badge';
+import { SearchInput } from '@/components/search-input';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { FormField } from '@/components/form-field';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { useToast } from '@/components/ui/toast';
+import {
+  useParents,
+  useCreateParent,
+  useUpdateParent,
+  useActiveInvitation,
+  useGenerateInvitation,
+} from '@/hooks/use-parents';
+import type { Parent } from '@/lib/types';
+import type { ColumnDef } from '@tanstack/react-table';
+
+const parentSchema = z.object({
+  firstName: z.string().min(1, 'El nombre es obligatorio'),
+  lastName: z.string().optional().nullable(),
+  dni: z.string().optional().nullable(),
+  phone: z.string().optional().nullable(),
+  email: z.string().email('El email no tiene un formato válido').optional().or(z.literal('')),
+});
+
+type ParentForm = z.infer<typeof parentSchema>;
+
+export function PadresPage() {
+  const [search, setSearch] = useState('');
+  const { data, isLoading, error, refetch } = useParents(search);
+  const createParent = useCreateParent();
+  const updateParent = useUpdateParent();
+  const { toast } = useToast();
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<Parent | null>(null);
+  const [invitingParent, setInvitingParent] = useState<Parent | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<ParentForm>({
+    resolver: zodResolver(parentSchema),
+    defaultValues: { firstName: '', lastName: '', dni: '', phone: '', email: '' },
+  });
+
+  const openCreate = () => {
+    setEditing(null);
+    reset({ firstName: '', lastName: '', dni: '', phone: '', email: '' });
+    setDialogOpen(true);
+  };
+
+  const openEdit = (parent: Parent) => {
+    setEditing(parent);
+    reset({
+      firstName: parent.firstName,
+      lastName: parent.lastName ?? '',
+      dni: parent.dni ?? '',
+      phone: parent.phone ?? '',
+      email: parent.email ?? '',
+    });
+    setDialogOpen(true);
+  };
+
+  const onSubmit = async (values: ParentForm) => {
+    try {
+      const data = { ...values, email: values.email || undefined };
+      if (editing) {
+        await updateParent.mutateAsync({ id: editing.id, data });
+        toast({ title: 'Padre actualizado', variant: 'success' });
+      } else {
+        await createParent.mutateAsync(data);
+        toast({ title: 'Padre creado', variant: 'success' });
+      }
+      setDialogOpen(false);
+    } catch (err) {
+      toast({
+        title: 'No se pudo guardar el padre',
+        description: err instanceof Error ? err.message : 'Inténtalo nuevamente.',
+        variant: 'error',
+      });
+    }
+  };
+
+  const columns: ColumnDef<Parent>[] = [
+    {
+      accessorKey: 'firstName',
+      header: 'Nombre',
+      cell: ({ row }) => (
+        <span className="font-medium">
+          {row.original.firstName} {row.original.lastName}
+        </span>
+      ),
+    },
+    {
+      accessorKey: 'dni',
+      header: 'DNI',
+      cell: ({ row }) => row.original.dni ?? '—',
+    },
+    {
+      accessorKey: 'email',
+      header: 'Contacto',
+      cell: ({ row }) => row.original.email ?? row.original.phone ?? '—',
+    },
+    {
+      accessorKey: 'students',
+      header: 'Alumnos vinculados',
+      cell: ({ row }) => {
+        const students = row.original.students ?? [];
+        if (students.length === 0) return '—';
+        return students
+          .map((link) => [link.student?.firstName, link.student?.lastName].filter(Boolean).join(' '))
+          .join(', ');
+      },
+    },
+    {
+      accessorKey: 'linkStatus',
+      header: 'Cuenta',
+      cell: ({ row }) => {
+        const status = row.original.linkStatus;
+        if (status === 'linked') return <StatusBadge status="active" label="Vinculada" />;
+        if (status === 'unlinked') return <StatusBadge status="inactive" label="Desvinculada" />;
+        return <StatusBadge status="pending" label="Sin vincular" />;
+      },
+    },
+    {
+      accessorKey: 'isActive',
+      header: 'Estado',
+      cell: ({ row }) => (
+        <StatusBadge status={row.original.isActive ? 'active' : 'inactive'} />
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
+      cell: ({ row }) => (
+        <div className="flex justify-end gap-1">
+          {row.original.linkStatus === 'pending' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setInvitingParent(row.original)}
+              aria-label="Generar invitación"
+              title="Generar invitación"
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" onClick={() => openEdit(row.original)} aria-label="Editar">
+            <Pencil className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Padres"
+        description="Gestiona los padres y apoderados de tu institución."
+        actions={
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Nuevo padre
+          </Button>
+        }
+      />
+
+      <SearchInput
+        placeholder="Buscar por nombre, DNI o email..."
+        value={search}
+        onValueChange={setSearch}
+        className="max-w-md"
+      />
+
+      {isLoading ? (
+        <LoadingState label="Cargando padres…" />
+      ) : error ? (
+        <ErrorState
+          title="No se pudieron cargar los padres"
+          message={error instanceof Error ? error.message : 'Inténtalo nuevamente.'}
+          onRetry={() => refetch()}
+        />
+      ) : (
+        <DataTable columns={columns} data={data ?? []} emptyMessage="Aún no hay padres registrados." />
+      )}
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Editar padre' : 'Nuevo padre'}</DialogTitle>
+            <DialogDescription>
+              {editing
+                ? 'Actualiza los datos institucionales del padre.'
+                : 'Completa los datos para registrar un nuevo padre. La cuenta se vincula cuando el padre inicia sesión desde la app.'}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField label="Nombre" htmlFor="firstName" required error={errors.firstName?.message}>
+                <Input id="firstName" placeholder="Nombre" {...register('firstName')} />
+              </FormField>
+              <FormField label="Apellido" htmlFor="lastName" error={errors.lastName?.message}>
+                <Input id="lastName" placeholder="Apellido" {...register('lastName')} />
+              </FormField>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField label="DNI" htmlFor="dni" error={errors.dni?.message}>
+                <Input id="dni" placeholder="DNI" {...register('dni')} />
+              </FormField>
+              <FormField label="Teléfono" htmlFor="phone" error={errors.phone?.message}>
+                <Input id="phone" placeholder="Teléfono" {...register('phone')} />
+              </FormField>
+            </div>
+
+            <FormField
+              label="Email"
+              htmlFor="email"
+              error={errors.email?.message}
+              hint="Se usa para que el padre vincule su cuenta desde la app."
+            >
+              <Input id="email" type="email" placeholder="correo@ejemplo.com" {...register('email')} />
+            </FormField>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={createParent.isPending || updateParent.isPending}>
+                {createParent.isPending || updateParent.isPending ? 'Guardando…' : 'Guardar'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {invitingParent && (
+        <InvitationDialog parent={invitingParent} onClose={() => setInvitingParent(null)} />
+      )}
+    </div>
+  );
+}
+
+// ── Modal de invitación ──────────────────────────────────────
+// Muestra la invitación activa del Parent si ya existe una (evita
+// duplicados), o el formulario para generar una nueva. El backend vuelve
+// a validar todo — este componente solo junta y muestra los datos.
+function InvitationDialog({ parent, onClose }: { parent: Parent; onClose: () => void }) {
+  const { data: activeInvitation, isLoading } = useActiveInvitation(parent.id, true);
+  const generateInvitation = useGenerateInvitation();
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+  const [email, setEmail] = useState(parent.email ?? '');
+
+  const daysUntil = (iso: string) => {
+    const diffMs = new Date(iso).getTime() - Date.now();
+    return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+  };
+
+  const copyCode = async (token: string) => {
+    await navigator.clipboard.writeText(token);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleGenerate = async () => {
+    if (!email.trim()) {
+      toast({ title: 'El email es obligatorio', description: 'El colegio debe indicar el Gmail que usará el padre.', variant: 'error' });
+      return;
+    }
+    try {
+      await generateInvitation.mutateAsync({ parentId: parent.id, email: email.trim() });
+      toast({ title: 'Invitación generada', variant: 'success' });
+    } catch (err) {
+      toast({
+        title: 'No se pudo generar la invitación',
+        description: err instanceof Error ? err.message : 'Inténtalo nuevamente.',
+        variant: 'error',
+      });
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Invitación · {parent.firstName} {parent.lastName}</DialogTitle>
+          <DialogDescription>
+            El padre debe ingresar este código antes de continuar con Google. Solo funciona con la
+            cuenta de Gmail indicada.
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading ? (
+          <LoadingState label="Buscando invitación…" />
+        ) : activeInvitation ? (
+          <div className="space-y-4">
+            <div className="rounded-md border bg-muted/30 p-4">
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Código</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 break-all rounded bg-background px-3 py-2 text-sm">
+                  {activeInvitation.token}
+                </code>
+                <Button variant="outline" size="icon" onClick={() => copyCode(activeInvitation.token)} aria-label="Copiar código">
+                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Invitación pendiente · vence en {daysUntil(activeInvitation.expiresAt)} día(s)
+              {activeInvitation.email && <> · para <span className="font-medium">{activeInvitation.email}</span></>}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <FormField
+              label="Email de Gmail del padre"
+              htmlFor="invite-email"
+              required
+              hint="Debe coincidir exactamente con la cuenta de Google que el padre usará para iniciar sesión."
+            >
+              <Input
+                id="invite-email"
+                type="email"
+                placeholder="correo@gmail.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </FormField>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cerrar
+          </Button>
+          {!activeInvitation && !isLoading && (
+            <Button onClick={handleGenerate} disabled={generateInvitation.isPending}>
+              {generateInvitation.isPending ? 'Generando…' : 'Generar invitación'}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

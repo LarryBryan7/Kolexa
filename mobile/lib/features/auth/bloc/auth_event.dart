@@ -65,14 +65,17 @@ final class LoginEvent extends AuthEvent {
 
 // ── GoogleLoginEvent ──────────────────────────────────────
 // Se dispara cuando el usuario presiona "Continuar con Google".
-// Lleva el ID Token de Google (obtenido con google_sign_in).
-// El backend lo valida criptográficamente y crea/asigna el rol parent.
+// Lleva el ID Token de Google (obtenido con google_sign_in) y el código
+// de invitación entregado por el colegio — obligatorio para el flujo de
+// padre, el backend rechaza con INVITATION_REQUIRED si falta.
 final class GoogleLoginEvent extends AuthEvent {
   final String idToken;
+  final String invitationToken;
   final String? firebaseToken; // para registrar el dispositivo en FCM
 
   const GoogleLoginEvent({
     required this.idToken,
+    required this.invitationToken,
     this.firebaseToken,
   });
 

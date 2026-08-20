@@ -52,8 +52,11 @@ class ClassroomRepository {
     return UpcomingStatus.fromJson(data);
   }
 
-  Future<TodaySummary> getParentTodaySummary() async {
-    final res = await _api.get('classroom/parent/today-summary');
+  // studentId obligatorio: el backend ya no acepta este endpoint sin un
+  // alumno específico (hallazgo BL-1 — antes devolvía la sesión de
+  // asistencia más reciente de CUALQUIER colegio, sin scoping).
+  Future<TodaySummary> getParentTodaySummary(String studentId) async {
+    final res = await _api.get('classroom/parent/today-summary?studentId=$studentId');
     return TodaySummary.fromJson(res.data as Map<String, dynamic>);
   }
 

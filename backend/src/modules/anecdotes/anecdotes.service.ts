@@ -23,7 +23,40 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class AnecdotesService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // ── isTeacherOfStudent ────────────────────────────────────
+  // Granularidad real de autorización docente en KOLEXA (hallazgo BL-2,
+  // Ronda 4): auditado el modelo — UserClassroom existe en el schema pero
+  // NO se usa en ningún service (grep exhaustivo sin resultados). La
+  // única relación exacta que el código YA usa para "¿este docente dicta
+  // clases a este alumno?" es ClassroomCourse (aula+curso→docente) cruzada
+  // con StudentEnrollment (alumno→aula, año en curso) — el mismo patrón
+  // que grades.service.ts::setGrade(). Se reutiliza aquí tal cual, en vez
+  // de la aproximación "mismo colegio" que dejó documentada la Ronda 3.
+  //
+  // Trade-off documentado: un docente que dictó a este alumno en un año
+  // ANTERIOR (matrícula ya no isActive) ya no ve sus anécdotas nuevas,
+  // aunque siga en el mismo colegio. Es una restricción MÁS estricta que
+  // "mismo colegio", consistente con lo que ya asumía grades.service.ts.
+  private async isTeacherOfStudent(teacherId: bigint, studentId: number): Promise<boolean> {
+    const currentYear = new Date().getFullYear();
+    const enrollment = await this.prisma.studentEnrollment.findFirst({
+      where: { studentId, academicYear: currentYear, isActive: true },
+      select: { classroomId: true },
+    });
+    if (!enrollment) return false;
+
+    const teaches = await this.prisma.classroomCourse.findFirst({
+      where: { classroomId: enrollment.classroomId, teacherId },
+      select: { id: true },
+    });
+    return !!teaches;
+  }
+
   // ── create ────────────────────────────────────────────────
+  // Extensión de BL-2 (mismo hallazgo, mismo fix): create() no tenía
+  // NINGÚN chequeo de ownership — cualquier autenticado podía crear una
+  // anécdota (incluso privada) sobre cualquier alumno. Reutiliza el mismo
+  // guard que getForStudent.
   async create(
     data: {
       studentId: number;
@@ -39,6 +72,11 @@ export class AnecdotesService {
       where: { id: data.studentId, deletedAt: null },
     });
     if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    const authorized = await this.isTeacherOfStudent(teacherId, data.studentId);
+    if (!authorized) {
+      throw new ForbiddenException('No dictas clases a este alumno');
+    }
 
     return this.prisma.anecdote.create({
       data: {
@@ -59,8 +97,25 @@ export class AnecdotesService {
 
   // ── getForStudent ─────────────────────────────────────────
   // Anécdotas de un alumno (el padre ve las no privadas).
+  //
+  // isTeacher llega derivado del JWT (ver controller), no de un query
+  // param (hallazgo BL-2, Ronda 3). Para el caso docente, la Ronda 3
+  // dejó documentado "mismo colegio" como interpretación mínima interina;
+  // la Ronda 4 la reemplaza por la relación exacta que ya usa
+  // grades.service.ts — ver isTeacherOfStudent() arriba.
   async getForStudent(studentId: number, requesterId: bigint, isTeacher: boolean) {
-    if (!isTeacher) {
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: { id: true },
+    });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    if (isTeacher) {
+      const authorized = await this.isTeacherOfStudent(requesterId, studentId);
+      if (!authorized) {
+        throw new ForbiddenException('No tienes acceso a las anécdotas de este alumno');
+      }
+    } else {
       // Verificar que es el padre del alumno
       const rel = await this.prisma.userStudent.findFirst({
         where: { userId: requesterId, studentId },

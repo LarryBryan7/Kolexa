@@ -26,6 +26,13 @@ export class MessagesService {
 
   // ── send ──────────────────────────────────────────────────
   // Envía un mensaje directo de un usuario a otro.
+  //
+  // Hallazgo BL-7 de la auditoría: cuando el mensaje referenciaba un
+  // studentId, nunca se validaba contra el remitente — permitía enviar
+  // mensajes asociados a alumnos ajenos (de cualquier colegio), que luego
+  // se podían enumerar vía GET /messages/sent (incluye datos del alumno).
+  // Se permite si el remitente es el padre real de ese alumno
+  // (userStudent) O si es personal del mismo colegio del alumno.
   async send(
     data: {
       recipientId: bigint;    // ID del destinatario
@@ -35,6 +42,7 @@ export class MessagesService {
       parentMessageId?: bigint; // si es una respuesta, ID del mensaje original
     },
     senderId: bigint,
+    senderSchoolId?: bigint,
   ) {
     // Verificar que el destinatario existe
     const recipient = await this.prisma.user.findUnique({
@@ -42,6 +50,22 @@ export class MessagesService {
     });
     if (!recipient) {
       throw new NotFoundException('Destinatario no encontrado');
+    }
+
+    if (data.studentId !== undefined) {
+      const student = await this.prisma.student.findUnique({
+        where: { id: data.studentId },
+        select: { schoolId: true },
+      });
+      if (!student) throw new NotFoundException('Alumno no encontrado');
+
+      const ownsAsParent = await this.prisma.userStudent.findFirst({
+        where: { userId: senderId, studentId: data.studentId },
+        select: { id: true },
+      });
+      if (!ownsAsParent && student.schoolId !== senderSchoolId) {
+        throw new ForbiddenException('No tienes acceso a este alumno');
+      }
     }
 
     // Crear el mensaje principal
