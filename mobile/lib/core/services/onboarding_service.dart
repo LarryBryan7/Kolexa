@@ -28,6 +28,12 @@ class OnboardingService {
   // queremos resetear el onboarding (ej: nueva versión de la app).
   static const String _keyOnboardingCompleted = 'onboarding_completed_v1';
 
+  // Rol elegido en role_selection_page ('parent' | 'teacher' | 'director' |
+  // 'student'). Se persiste para que LoginPage sepa qué mostrar incluso en
+  // arranques posteriores, cuando el router va directo a /login sin pasar
+  // por role-selection (ver AppRouter.createRouter: initialLocation).
+  static const String _keySelectedRole = 'onboarding_selected_role_v1';
+
   // Instancia cacheada de SharedPreferences. Se inicializa en main()
   // ANTES de runApp para que `isCompleted` sea síncrono.
   SharedPreferences? _prefs;
@@ -53,6 +59,14 @@ class OnboardingService {
   // termina el flujo (selecciona su rol y presiona "Continuar").
   Future<void> complete() async {
     await _prefs?.setBool(_keyOnboardingCompleted, true);
+  }
+
+  // Rol elegido en role_selection_page. null si nunca se guardó (ej.
+  // usuarios que ya habían completado el onboarding antes de este cambio).
+  String? get selectedRole => _prefs?.getString(_keySelectedRole);
+
+  Future<void> setSelectedRole(String role) async {
+    await _prefs?.setString(_keySelectedRole, role);
   }
 
   // Útil para testing / debug: permite reiniciar el onboarding.
