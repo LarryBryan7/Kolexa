@@ -168,7 +168,19 @@ class UserModel {
       'lastName': lastName,
       if (phone != null) 'phone': phone,
       if (avatar != null) 'avatar': avatar,
-      'roles': roles,
+      // fromJson() espera 'roles' como lista de OBJETOS ({role, schoolId,
+      // schoolName}), igual que el backend — no una lista plana de strings.
+      // Antes este toJson() escribía la forma plana, así que el próximo
+      // fromJson() (al releer el cache local en el arranque de la app)
+      // fallaba con un TypeError silencioso, borraba la sesión entera, y
+      // forzaba login de nuevo SIEMPRE, no solo a veces.
+      'roles': roles
+          .map((r) => {
+                'role': r,
+                if (schoolId != null) 'schoolId': schoolId.toString(),
+                if (schoolName != null) 'schoolName': schoolName,
+              })
+          .toList(),
       if (schoolId != null) 'schoolId': schoolId,
       if (schoolName != null) 'schoolName': schoolName,
       'children': children.map((c) => c.toJson()).toList(),

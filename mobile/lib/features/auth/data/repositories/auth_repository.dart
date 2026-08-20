@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../datasources/auth_remote_datasource.dart';
 import '../models/user_model.dart';
@@ -91,15 +92,18 @@ class AuthRepository {
 
   Future<UserModel?> getCurrentUser() async {
     final token = await TokenStore.readAccessToken();
+    debugPrint('[AUTH-CHECK] TokenStore.readAccessToken() → ${token == null ? "null" : "presente (${token.length} chars)"}');
     if (token == null) return null;
 
     final prefs = await _prefs;
     final userJson = prefs.getString(_userKey);
+    debugPrint('[AUTH-CHECK] SharedPreferences[$_userKey] → ${userJson == null ? "null" : "presente"}');
     if (userJson == null) return null;
 
     try {
       return UserModel.fromJson(jsonDecode(userJson) as Map<String, dynamic>);
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[AUTH-CHECK] UserModel.fromJson() falló, se limpia la sesión: $e\n$st');
       await TokenStore.clear();
       await _clearLocalUser();
       return null;
