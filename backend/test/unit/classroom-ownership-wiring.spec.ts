@@ -36,8 +36,11 @@ function makeService() {
     getUpcomingStatus: jest.fn().mockResolvedValue({ connected: true, upcoming: [] }),
     getParentHome: jest.fn().mockResolvedValue({ todaySummary: {}, upcomingStatus: {} }),
     getParentTodaySummary: jest.fn().mockResolvedValue({ arrivalStatus: null }),
+    uploadStudentAvatar: jest.fn().mockResolvedValue({ avatarUrl: 'https://signed.example/fake.jpg' }),
   };
 }
+
+const fakeFile: any = { originalname: 'foto.jpg', mimetype: 'image/jpeg', buffer: Buffer.from('x') };
 
 describe('ClassroomController — ownership gate en los 8 endpoints student/:id/* + parent/*', () => {
   const cases: [string, (c: ClassroomController) => Promise<any>][] = [
@@ -50,6 +53,7 @@ describe('ClassroomController — ownership gate en los 8 endpoints student/:id/
     ['getUpcomingStatus', (c) => c.getUpcomingStatus(STUDENT_B, fakeUser)],
     ['getParentHome', (c) => c.getParentHome(STUDENT_B, fakeUser)],
     ['getParentTodaySummary', (c) => c.getParentTodaySummary(STUDENT_B, fakeUser)],
+    ['uploadAvatar', (c) => c.uploadAvatar(STUDENT_B, fakeFile, fakeUser)],
   ];
 
   it.each(cases)(
@@ -69,6 +73,7 @@ describe('ClassroomController — ownership gate en los 8 endpoints student/:id/
         : name === 'getStatus' ? 'isConnected'
         : name === 'sync' ? 'syncStudent'
         : name === 'getUpcoming' ? 'getUpcomingCoursework'
+        : name === 'uploadAvatar' ? 'uploadStudentAvatar'
         : name;
       expect((service as any)[serviceMethodName]).not.toHaveBeenCalled();
     },
@@ -83,6 +88,7 @@ describe('ClassroomController — ownership gate en los 8 endpoints student/:id/
     ['getUpcomingStatus', (c) => c.getUpcomingStatus(STUDENT_A, fakeUser)],
     ['getParentHome', (c) => c.getParentHome(STUDENT_A, fakeUser)],
     ['getParentTodaySummary', (c) => c.getParentTodaySummary(STUDENT_A, fakeUser)],
+    ['uploadAvatar', (c) => c.uploadAvatar(STUDENT_A, fakeFile, fakeUser)],
   ];
 
   it.each(legitimateCases)(

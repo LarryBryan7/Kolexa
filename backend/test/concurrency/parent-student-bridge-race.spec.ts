@@ -28,6 +28,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { AuthService } from '../../src/modules/auth/auth.service';
+import { SupabaseStorageService } from '../../src/modules/storage/supabase-storage.service';
 import { InvitationsService } from '../../src/modules/invitations/invitations.service';
 import { AdminService } from '../../src/modules/admin/admin.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
@@ -53,7 +54,7 @@ describe('IM-8 — race createParentStudentLink() vs. primer login de Google (Po
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
-        AuthService, InvitationsService, AdminService, PrismaService,
+        AuthService, InvitationsService, AdminService, PrismaService, SupabaseStorageService,
         { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue('jwt.fake') } },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue('fake-client-id') } },
       ],
