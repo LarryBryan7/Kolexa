@@ -19,17 +19,14 @@ const _kIconGray = Color(0xFF737378);
 const _kBorder   = Color(0xFFE5E5EA);
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, this.role, this.invitationToken});
+  const LoginPage({super.key, this.role});
 
   // Rol elegido en role_selection_page ('parent' | 'teacher' | 'director' |
-  // 'student' | null). Para 'parent' esta pantalla muestra SOLO el botón de
-  // Google — el usuario/contraseña no sirve para padres (su passwordHash es
-  // un valor aleatorio que nadie conoce, ver auth.service.ts).
+  // 'student' | null). Para 'parent' esta pantalla muestra SOLO el código de
+  // invitación + botón de Google — el usuario/contraseña no sirve para
+  // padres (su passwordHash es un valor aleatorio que nadie conoce, ver
+  // auth.service.ts).
   final String? role;
-
-  // Código de invitación ya capturado en role-selection (solo aplica si
-  // role == 'parent'). Prefill del campo que antes vivía en esta pantalla.
-  final String? invitationToken;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -40,8 +37,7 @@ class _LoginPageState extends State<LoginPage> {
   // El usuario puede editarlas antes de iniciar sesión.
   final _emailController      = TextEditingController(text: 'sofia.mendez@gmail.com');
   final _passwordController   = TextEditingController(text: '123456');
-  late final _invitationController =
-      TextEditingController(text: widget.invitationToken ?? '');
+  final _invitationController = TextEditingController();
   final _formKey               = GlobalKey<FormState>();
   bool _obscurePassword       = true;
 
@@ -353,9 +349,6 @@ class _LoginPageState extends State<LoginPage> {
                     ], // fin if (!_isParent)
 
                     // ── Código de invitación (obligatorio para Google) ──
-                    // Para role == 'parent' ya viene prefilled desde
-                    // role_selection_page — no hace falta pedirlo de nuevo acá.
-                    if (!_isParent) ...[
                     const SizedBox(height: 18),
                     SizedBox(
                       height: 52,
@@ -370,7 +363,6 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                     ),
-                    ],
 
                     // ── Continuar con Google ──────────────────
                     const SizedBox(height: 12),
