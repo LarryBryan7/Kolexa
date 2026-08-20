@@ -120,7 +120,16 @@ class AppRouter {
         ),
         GoRoute(
           path: login,
-          builder: (_, __) => const LoginPage(),
+          builder: (_, state) {
+            // extra viene de role-selection (navegación recién hecha). Si es
+            // null (ej. arranque directo a /login porque el onboarding ya
+            // estaba completo — ver initialLocation arriba), se cae al rol
+            // persistido por OnboardingService en la última selección.
+            final extra = state.extra as Map<String, dynamic>?;
+            final role = extra?['role'] as String? ?? OnboardingService.instance.selectedRole;
+            final invitationToken = extra?['invitationToken'] as String?;
+            return LoginPage(role: role, invitationToken: invitationToken);
+          },
         ),
         GoRoute(
           path: home,
