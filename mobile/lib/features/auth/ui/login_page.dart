@@ -44,6 +44,12 @@ class _LoginPageState extends State<LoginPage> {
 
   bool get _isParent => widget.role == 'parent';
 
+  // Padre que ya vinculó Google con éxito antes en este dispositivo — se le
+  // muestra un saludo personalizado (nombre + avatar) en vez del logo K,
+  // y ya no ve el campo de código (ver más abajo).
+  bool get _isReturningParent =>
+      _isParent && OnboardingService.instance.hasLinkedGoogleParentBefore;
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -181,16 +187,27 @@ class _LoginPageState extends State<LoginPage> {
                 key: _formKey,
                 child: Column(
                   children: [
-                    // ── Logo K ────────────────────────────────
+                    // ── Logo K, o avatar si es un padre que ya vinculó ──
                     const SizedBox(height: 58),
-                    const Center(
-                      child: KolexaLogo(height: 53, color: _kPrimary),
-                    ),
+                    if (_isReturningParent)
+                      Center(
+                        child: _LoginAvatar(
+                          avatarUrl: OnboardingService.instance.lastParentAvatar,
+                          firstName: OnboardingService.instance.lastParentFirstName ?? '',
+                          lastName: OnboardingService.instance.lastParentLastName ?? '',
+                        ),
+                      )
+                    else
+                      const Center(
+                        child: KolexaLogo(height: 53, color: _kPrimary),
+                      ),
 
                     // ── Título ────────────────────────────────
                     const SizedBox(height: 19),
                     Text(
-                      _isParent ? 'Ingresa a Kolexa' : 'Iniciar sesión',
+                      _isReturningParent
+                          ? 'Hola ${OnboardingService.instance.lastParentFirstName ?? ''} 👋'
+                          : (_isParent ? 'Ingresa a Kolexa' : 'Iniciar sesión'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 22,
@@ -202,11 +219,11 @@ class _LoginPageState extends State<LoginPage> {
                     // ── Subtítulo ─────────────────────────────
                     const SizedBox(height: 5),
                     Text(
-                      _isParent
-                          ? (OnboardingService.instance.hasLinkedGoogleParentBefore
-                              ? 'Continúa con tu cuenta de Google'
-                              : 'Brindanos el código que te generó tu colegio y continúa con Google')
-                          : 'Ingresa tus datos para continuar',
+                      _isReturningParent
+                          ? 'Continúa viendo las novedades de tu hijo en un solo lugar'
+                          : (_isParent
+                              ? 'Brindanos el código que te generó tu colegio y continúa con Google'
+                              : 'Ingresa tus datos para continuar'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontSize: 15, color: _kTextGray),
                     ),
@@ -449,6 +466,61 @@ class _LoginPageState extends State<LoginPage> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+// ── Avatar del saludo de retorno ─────────────────────────────
+// Foto de Google si existe (User.avatar), si no, iniciales sobre fondo
+// _kPrimary — mismo patrón que _AvatarCircle en home_v2_page.dart.
+class _LoginAvatar extends StatelessWidget {
+  const _LoginAvatar({
+    required this.avatarUrl,
+    required this.firstName,
+    required this.lastName,
+  });
+
+  final String? avatarUrl;
+  final String firstName;
+  final String lastName;
+
+  String get _initials {
+    final f = firstName.isNotEmpty ? firstName[0].toUpperCase() : '';
+    final l = lastName.isNotEmpty ? lastName[0].toUpperCase() : '';
+    return '$f$l';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const size = 56.0;
+    if (avatarUrl != null) {
+      return ClipOval(
+        child: Image.network(
+          avatarUrl!,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _fallback(),
+        ),
+      );
+    }
+    return _fallback();
+  }
+
+  Widget _fallback() {
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: const BoxDecoration(color: _kPrimary, shape: BoxShape.circle),
+      alignment: Alignment.center,
+      child: Text(
+        _initials,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
