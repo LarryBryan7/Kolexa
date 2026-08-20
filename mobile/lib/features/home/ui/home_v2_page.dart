@@ -451,6 +451,11 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     final authState = context.read<AuthBloc>().state;
     final firstName =
         authState is AuthAuthenticated ? authState.user.firstName : '';
+    final parentAvatarUrl =
+        authState is AuthAuthenticated ? authState.user.avatar : null;
+    final parentInitials = authState is AuthAuthenticated
+        ? _initials(authState.user.firstName, authState.user.lastName)
+        : '';
     final children = _buildChildren(authState);
     final safeIndex =
         children.isEmpty ? 0 : _selectedChild.clamp(0, children.length - 1);
@@ -539,13 +544,26 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
                                 ],
                               ),
                             ),
-                            if (children.isNotEmpty)
+                            // Con un solo hijo no hay nada entre qué elegir
+                            // — en vez del switcher (pensado para 2+ hijos,
+                            // con círculo secundario y badge) se muestra la
+                            // foto de perfil de Google del padre.
+                            if (children.length > 1)
                               Padding(
                                 padding: const EdgeInsets.only(top: 3),
                                 child: _ChildSwitcher(
                                   children: children,
                                   selectedIndex: safeIndex,
                                   onSelect: _selectChild,
+                                ),
+                              )
+                            else if (children.length == 1)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 3),
+                                child: _AvatarCircle(
+                                  initials: parentInitials,
+                                  size: sizes.childSwitcherCircle,
+                                  avatarUrl: parentAvatarUrl,
                                 ),
                               ),
                           ],
