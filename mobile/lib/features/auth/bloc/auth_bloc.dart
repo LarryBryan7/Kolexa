@@ -27,6 +27,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../data/repositories/auth_repository.dart';
+import '../../../core/services/onboarding_service.dart';
 import 'auth_event.dart';
 import 'auth_state.dart';
 
@@ -49,6 +50,19 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<GoogleLoginEvent>(_onGoogleLogin);
     on<LogoutEvent>(_onLogout);
     on<ChangePasswordEvent>(_onChangePassword);
+    on<UserUpdatedEvent>(_onUserUpdated);
+  }
+
+  // ── _onUserUpdated ────────────────────────────────────────
+  // Re-cachea y re-emite el usuario sin pegarle al backend (ver
+  // AuthEvent.UserUpdatedEvent). No pasa por AuthLoading — es una
+  // actualización silenciosa, no un login nuevo.
+  Future<void> _onUserUpdated(
+    UserUpdatedEvent event,
+    Emitter<AuthState> emit,
+  ) async {
+    await _repository.updateCachedUser(event.user);
+    emit(AuthAuthenticated(event.user));
   }
 
   // ── _onCheckAuth ─────────────────────────────────────────
@@ -124,6 +138,12 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   ) async {
     emit(const AuthLoading());
 
+    // Capturado ANTES de repository.loginWithGoogle(): ese método marca el
+    // flag a true internamente al tener éxito (ver AuthRepository), así que
+    // leerlo DESPUÉS siempre daría true — perdería la distinción entre
+    // "primera vez" y "ya vinculado antes" que LoginPage necesita.
+    final wasFirstLink = !OnboardingService.instance.hasLinkedGoogleParentBefore;
+
     try {
       final user = await _repository.loginWithGoogle(
         idToken: event.idToken,
@@ -131,7 +151,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         firebaseToken: event.firebaseToken,
       );
 
-      emit(AuthAuthenticated(user));
+      emit(AuthAuthenticated(user, isFirstGoogleLogin: wasFirstLink));
     } catch (e) {
       emit(AuthError(e.toString().replaceFirst('Exception: ', '')));
     }
