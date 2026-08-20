@@ -24,6 +24,7 @@
 //   - Separación: la UI no sabe nada de HTTP, el BLoC no sabe nada de widgets
 // ============================================================
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../data/repositories/auth_repository.dart';
 import 'auth_event.dart';
@@ -68,6 +69,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       // Intentar obtener el usuario guardado localmente
       // (sin hacer petición HTTP — solo lee del SecureStorage)
       final user = await _repository.getCurrentUser();
+      debugPrint('[AUTH-CHECK] getCurrentUser() → ${user == null ? "null (sin sesión)" : "usuario ${user.email}"}');
 
       if (user != null) {
         // Hay una sesión activa → navegar a Home
@@ -76,8 +78,9 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         // No hay sesión → mostrar pantalla de login
         emit(const AuthUnauthenticated());
       }
-    } catch (_) {
+    } catch (e, st) {
       // Si algo falla al leer el storage, pedir login
+      debugPrint('[AUTH-CHECK] EXCEPCIÓN al restaurar sesión: $e\n$st');
       emit(const AuthUnauthenticated());
     }
   }
