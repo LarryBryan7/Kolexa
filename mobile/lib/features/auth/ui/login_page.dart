@@ -169,7 +169,12 @@ class _LoginPageState extends State<LoginPage> {
       body: BlocConsumer<AuthBloc, AuthState>(
         listener: (context, state) {
           if (state is AuthAuthenticated) {
-            if (state.isFirstGoogleLogin) {
+            // Dato real, no un flag local: si algún hijo todavía no tiene
+            // foto, se muestra la pantalla (aunque ya haya subido la de
+            // otro hijo, o desde otro dispositivo). Si todos ya tienen,
+            // no hay nada que hacer ahí — directo al home.
+            final missingPhoto = state.user.children.any((c) => c.avatarUrl == null);
+            if (missingPhoto) {
               context.go(AppRouter.hijosEncontrados, extra: state.user);
             } else {
               context.go(AppRouter.home);
