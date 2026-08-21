@@ -7,8 +7,9 @@
 //
 // Flujo de navegación:
 //   App arranca → splash nativo cubre todo (preserve en main.dart)
-//   AuthBloc resuelve sesión → remove() → welcome/login (según sesión) o home
-//   Sin sesión: welcome → (crear cuenta) role-selection, o (ya tengo cuenta) login
+//   AuthBloc resuelve sesión → remove() → login (según sesión) o home
+//   Sin sesión: login directo — todos los roles entran con Google + código
+//   de invitación, el rol se valida en el backend (ver AuthService.loginWithGoogle).
 //
 // En Flutter Web, las rutas aparecen en la URL del navegador.
 // En móvil, son rutas internas para el deep linking.
@@ -29,11 +30,8 @@ import '../../features/auth/ui/login_page.dart';
 import '../../features/home/ui/home_v2_page.dart';
 import '../../features/home/ui/home_docente_page.dart';
 import '../../features/home/ui/home_director_page.dart';
-import '../../features/onboarding/ui/welcome_page.dart';
-import '../../features/onboarding/ui/role_selection_page.dart';
 import '../../features/onboarding/ui/hijos_encontrados_page.dart';
 import '../../features/auth/data/models/user_model.dart';
-import '../services/onboarding_service.dart';
 import '../../features/classroom/ui/classroom_page.dart';
 import '../../features/classroom/bloc/classroom_bloc.dart';
 import '../../features/home/ui/esta_semana_page.dart';
@@ -65,18 +63,14 @@ CustomTransitionPage<void> _fadePage(GoRouterState state, Widget child) {
 // ── AppRouter ─────────────────────────────────────────────
 class AppRouter {
   // Rutas como constantes para evitar strings duplicados
-  static const String welcome = '/welcome';
-  static const String roleSelection = '/role-selection';
   static const String login = '/login';
   static const String hijosEncontrados = '/hijos-encontrados';
   static const String home = '/home';
   static const String classroom = '/classroom';
   static const String estaSemana = '/esta-semana';
 
-  // Rutas del flujo público (sin sesión): onboarding + login.
-  // Un usuario no autenticado puede navegar libremente entre estas,
-  // sin que el redirect lo empuje de vuelta a welcome en cada paso.
-  static const Set<String> _publicFlow = {welcome, roleSelection, login};
+  // Rutas del flujo público (sin sesión).
+  static const Set<String> _publicFlow = {login};
 
   // Instancia del GoRouter — se crea una sola vez
   // 'late final' significa: inicialización diferida, no cambia después
@@ -94,15 +88,8 @@ class AppRouter {
     // que go_router puede escuchar para re-evaluar las redirecciones
     final refreshStream = _GoRouterRefreshStream(authBloc.stream);
 
-    // Punto de entrada según el estado del onboarding:
-    //   - Primera vez (no completado) → welcome (flujo de bienvenida)
-    //   - Ya completado → login directo (el usuario "ya creó su cuenta")
-    // OnboardingService se inicializa en main() antes de runApp, por lo
-    // que `isCompleted` es síncrono y seguro de leer aquí.
-    final initialLocation = OnboardingService.instance.isCompleted ? login : welcome;
-
     _router = GoRouter(
-      initialLocation: initialLocation,
+      initialLocation: login,
 
       // refreshListenable: go_router re-evalúa el redirect cada vez
       // que el BLoC emite un nuevo estado.
@@ -137,24 +124,8 @@ class AppRouter {
 
       routes: [
         GoRoute(
-          path: welcome,
-          pageBuilder: (_, state) => _fadePage(state, const WelcomePage()),
-        ),
-        GoRoute(
-          path: roleSelection,
-          pageBuilder: (_, state) => _fadePage(state, const RoleSelectionPage()),
-        ),
-        GoRoute(
           path: login,
-          pageBuilder: (_, state) {
-            // extra viene de role-selection (navegación recién hecha). Si es
-            // null (ej. arranque directo a /login porque el onboarding ya
-            // estaba completo — ver initialLocation arriba), se cae al rol
-            // persistido por OnboardingService en la última selección.
-            final extra = state.extra as Map<String, dynamic>?;
-            final role = extra?['role'] as String? ?? OnboardingService.instance.selectedRole;
-            return _fadePage(state, LoginPage(role: role));
-          },
+          pageBuilder: (_, state) => _fadePage(state, const LoginPage()),
         ),
         GoRoute(
           path: hijosEncontrados,

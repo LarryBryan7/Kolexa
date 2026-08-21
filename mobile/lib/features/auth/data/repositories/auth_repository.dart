@@ -62,8 +62,8 @@ class AuthRepository {
     // mostrar el campo de código en futuros logins (ver LoginPage), y
     // guardamos un snapshot liviano (nombre + avatar) que sobrevive al
     // logout, para el saludo personalizado en la pantalla de login.
-    await OnboardingService.instance.markGoogleParentLinked();
-    await OnboardingService.instance.saveLastParentProfile(
+    await OnboardingService.instance.markGoogleLinked();
+    await OnboardingService.instance.saveLastLoginProfile(
       firstName: loginResponse.user.firstName,
       lastName: loginResponse.user.lastName,
       avatar: loginResponse.user.avatar,
