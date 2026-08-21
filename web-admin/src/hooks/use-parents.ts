@@ -84,6 +84,7 @@ export function useDeleteParentStudentLink() {
 // ── Invitaciones ────────────────────────────────────────────
 export interface ParentInvitation {
   token: string;
+  shortCode: string;
   expiresAt: string;
   email: string | null;
 }
@@ -112,7 +113,7 @@ export function useGenerateInvitation() {
     // schoolId no se envía: el backend siempre usa el colegio del admin
     // autenticado (JWT), nunca un valor mandado por el cliente.
     mutationFn: ({ parentId, email }: { parentId: string; email: string }) =>
-      api<{ token: string; expiresAt: string; inviteLink: string }>('/invitations', {
+      api<{ token: string; shortCode: string; expiresAt: string; inviteLink: string }>('/invitations', {
         method: 'POST',
         body: { parentId, email },
       }),

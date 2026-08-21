@@ -385,13 +385,20 @@ function InvitationDialog({ parent, onClose }: { parent: Parent; onClose: () => 
           <LoadingState label="Buscando invitación…" />
         ) : activeInvitation ? (
           <div className="space-y-4">
-            <div className="rounded-md border bg-muted/30 p-4">
-              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Código</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 break-all rounded bg-background px-3 py-2 text-sm">
-                  {activeInvitation.token}
+            <div className="rounded-md border bg-muted/30 p-4 text-center">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Código (dictáselo al padre o compartilo)
+              </p>
+              <div className="flex items-center justify-center gap-2">
+                <code className="rounded bg-background px-4 py-2 text-2xl font-bold tracking-[0.3em]">
+                  {activeInvitation.shortCode}
                 </code>
-                <Button variant="outline" size="icon" onClick={() => copyCode(activeInvitation.token)} aria-label="Copiar código">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => copyCode(activeInvitation.shortCode)}
+                  aria-label="Copiar código"
+                >
                   {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                 </Button>
               </div>
