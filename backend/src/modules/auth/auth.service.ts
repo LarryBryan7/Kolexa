@@ -355,22 +355,49 @@ export class AuthService {
         return this.prisma.$transaction(async (tx) => {
           let txUser = knownUser;
           if (!txUser) {
-            txUser = await tx.user.create({
-              data: {
-                // googleEmail (trim+lowercase), no payload.email crudo —
-                // hallazgo IM-7: este User se creaba con el email TAL
-                // CUAL lo mandaba el token de Google, inconsistente con
-                // googleEmail (ya normalizado) que se usó para todas las
-                // comparaciones de arriba.
-                email: googleEmail,
-                passwordHash: precomputedPasswordHash!,
-                firstName: payload.given_name ?? '',
-                lastName: payload.family_name ?? '',
-                avatar: payload.picture ?? null,
-                googleSub: payload.sub,
-                isActive: true,
-              },
-            });
+            // Reutilizar por email un User ya existente (ej.: una cuenta
+            // creada para otro rol desde Web Admin, o un vínculo de Google
+            // reseteado manualmente) en vez de asumir que no hay ninguno —
+            // `existing` (arriba) solo busca por googleSub, así que una fila
+            // con el mismo email pero sin ese googleSub no se detecta ahí.
+            // Sin este chequeo, el create() de abajo choca con la
+            // restricción de unicidad del email (ver catch más abajo) y
+            // termina en un callejón sin salida. Mismo patrón que ya usa
+            // _linkGenericInvitation() y AdminService.createUser().
+            const byEmail = await tx.user.findUnique({ where: { email: googleEmail } });
+            if (byEmail) {
+              if (byEmail.deletedAt || !byEmail.isActive) {
+                throw new UnauthorizedException('La cuenta está inactiva o ha sido eliminada');
+              }
+              if (byEmail.googleSub && byEmail.googleSub !== payload.sub) {
+                // Ya vinculada a OTRA cuenta de Google — no se puede
+                // reclamar silenciosamente (fuera de alcance: unir cuentas).
+                throw new ConflictException(
+                  'Este correo ya está vinculado a otra cuenta de Google.',
+                );
+              }
+              txUser = await tx.user.update({
+                where: { id: byEmail.id },
+                data: { googleSub: payload.sub, isActive: true },
+              });
+            } else {
+              txUser = await tx.user.create({
+                data: {
+                  // googleEmail (trim+lowercase), no payload.email crudo —
+                  // hallazgo IM-7: este User se creaba con el email TAL
+                  // CUAL lo mandaba el token de Google, inconsistente con
+                  // googleEmail (ya normalizado) que se usó para todas las
+                  // comparaciones de arriba.
+                  email: googleEmail,
+                  passwordHash: precomputedPasswordHash!,
+                  firstName: payload.given_name ?? '',
+                  lastName: payload.family_name ?? '',
+                  avatar: payload.picture ?? null,
+                  googleSub: payload.sub,
+                  isActive: true,
+                },
+              });
+            }
           }
 
           await tx.userRole.upsert({
