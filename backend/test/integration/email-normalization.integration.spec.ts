@@ -105,7 +105,7 @@ describe('IM-7 — efecto real en BD: sin duplicados por capitalización (Postgr
     const dto = plainToInstance(CreateInvitationDto, { email, parentId: String(parent.id) });
 
     const created = await invitationsService.create(
-      { schoolId, email: dto.email, roleId: 3, parentId: parent.id },
+      { schoolId, email: dto.email, parentId: parent.id },
       1n,
     );
 

@@ -22,8 +22,6 @@ import { assertLocalTestDatabase } from '../helpers/db-guard';
 
 assertLocalTestDatabase();
 
-const PARENT_ROLE_ID = 3;
-
 describe('POST /invitations/validate — contrato y lógica (Postgres real)', () => {
   let prisma: PrismaService;
   let invitationsService: InvitationsService;
@@ -68,7 +66,7 @@ describe('POST /invitations/validate — contrato y lógica (Postgres real)', ()
 
   it('token válido → devuelve los datos de la invitación', async () => {
     const inv = await invitationsService.create(
-      { schoolId, email: 'im6-valid@idor-test.kolexa', roleId: PARENT_ROLE_ID, parentId },
+      { schoolId, email: 'im6-valid@idor-test.kolexa', parentId },
       1n,
     );
     const result = await invitationsService.validate(inv.token);
@@ -82,7 +80,7 @@ describe('POST /invitations/validate — contrato y lógica (Postgres real)', ()
 
   it('token expirado → BadRequestException (400)', async () => {
     const inv = await invitationsService.create(
-      { schoolId, email: 'im6-expired@idor-test.kolexa', roleId: PARENT_ROLE_ID },
+      { schoolId, email: 'im6-expired@idor-test.kolexa', role: 'teacher' },
       1n,
     );
     await prisma.schoolInvitation.update({
@@ -94,7 +92,7 @@ describe('POST /invitations/validate — contrato y lógica (Postgres real)', ()
 
   it('token ya usado → BadRequestException (400)', async () => {
     const inv = await invitationsService.create(
-      { schoolId, email: 'im6-used@idor-test.kolexa', roleId: PARENT_ROLE_ID },
+      { schoolId, email: 'im6-used@idor-test.kolexa', role: 'teacher' },
       1n,
     );
     await prisma.schoolInvitation.update({ where: { token: inv.token }, data: { usedAt: new Date() } });

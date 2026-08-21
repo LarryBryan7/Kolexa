@@ -14,7 +14,7 @@ export class InvitationsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(
-    data: { schoolId: bigint; email?: string; roleId?: number; parentId?: bigint },
+    data: { schoolId: bigint; email?: string; role?: 'teacher' | 'school_admin'; parentId?: bigint },
     invitedBy: bigint,
   ) {
     const school = await this.prisma.school.findUnique({ where: { id: data.schoolId }, select: { name: true } });
@@ -44,12 +44,18 @@ export class InvitationsService {
         throw new ConflictException('Este padre ya tiene una cuenta vinculada');
       }
     } else {
-      if (!data.roleId) {
-        throw new BadRequestException('roleId es obligatorio para invitaciones genéricas');
+      if (!data.role) {
+        throw new BadRequestException('role es obligatorio para invitaciones genéricas');
       }
-      const role = await this.prisma.role.findUnique({ where: { id: data.roleId }, select: { name: true } });
-      if (!role) throw new NotFoundException('Rol no encontrado');
-      roleId = data.roleId;
+      if (!data.email) {
+        // El login con Google exige que el email coincida exacto con el de
+        // la invitación (mismo mecanismo que Parent) — sin email acá, ese
+        // chequeo de identidad no puede aplicarse.
+        throw new BadRequestException('El email es obligatorio para esta invitación');
+      }
+      const role = await this.prisma.role.findUnique({ where: { name: data.role }, select: { id: true, name: true } });
+      if (!role) throw new BadRequestException(`El rol "${data.role}" no está configurado`);
+      roleId = role.id;
       roleName = role.name;
     }
 
@@ -135,6 +141,33 @@ export class InvitationsService {
 
     return this.prisma.schoolInvitation.findFirst({
       where: { parentId, schoolId, usedAt: null, expiresAt: { gt: new Date() } },
+      select: { token: true, expiresAt: true, email: true },
+    });
+  }
+
+  // Equivalente a findActiveForParent(), para invitaciones GENÉRICAS
+  // (docente/director) — estas no tienen un Parent que las identifique, así
+  // que se buscan por email + schoolId (una invitación genérica es única
+  // por email+colegio activo, ver create() más arriba).
+  //
+  // userId se recibe (no solo el email) para validar ownership: el User
+  // debe pertenecer a este colegio (tener algún UserRole con este
+  // schoolId), mismo patrón anti-IDOR que findActiveForParent.
+  async findActiveForUser(schoolId: bigint, userId: bigint) {
+    const targetUser = await this.prisma.user.findFirst({
+      where: { id: userId, userRoles: { some: { schoolId } } },
+      select: { email: true },
+    });
+    if (!targetUser) throw new NotFoundException('Usuario no encontrado');
+
+    return this.prisma.schoolInvitation.findFirst({
+      where: {
+        email: targetUser.email,
+        schoolId,
+        parentId: null,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
       select: { token: true, expiresAt: true, email: true },
     });
   }

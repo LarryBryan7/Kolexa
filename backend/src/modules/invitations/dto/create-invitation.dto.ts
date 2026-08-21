@@ -1,17 +1,18 @@
-import { IsEmail, IsInt, IsString, IsOptional } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsEmail, IsIn, IsString, IsOptional } from 'class-validator';
 import { IsBigIntString } from '../../../common/validators/is-bigint-string.validator';
 import { NormalizeEmail } from '../../../common/decorators/normalize-email.decorator';
 
-// email: obligatorio de facto para invitaciones de Parent (validado en el
-// service, no aquí, porque el DTO es compartido con invitaciones genéricas
-// de otros roles que pueden no necesitarlo).
+// email: obligatorio de facto tanto para invitaciones de Parent como
+// genéricas (validado en el service, no aquí) — el login con Google exige
+// que coincida exacto con el email de la cuenta que se vincula.
 // parentId: presente únicamente cuando la invitación es para un Parent
 // institucional concreto — el service deriva schoolId/rol a partir de ahí,
 // nunca confía en lo que mande el cliente para decidir la vinculación.
-// roleId: opcional cuando hay parentId (el service lo deriva del rol
-// "parent" por nombre); obligatorio para invitaciones genéricas de otros
-// roles, donde sí hace falta que el cliente lo indique.
+// role: obligatorio cuando NO hay parentId (invitación genérica de
+// docente/director). Se valida contra una lista blanca y se resuelve al
+// roleId real DENTRO del service — el cliente nunca manda un id numérico
+// de rol directamente (mismo principio que ya aplicaba a "parent": Web
+// Admin no necesita conocer ids internos de la tabla Role).
 // schoolId: el controller SIEMPRE usa el schoolId del JWT del admin
 // autenticado (user.schoolId), nunca este campo — se deja opcional para
 // no pedirle al cliente un dato que de todas formas se ignora.
@@ -30,9 +31,8 @@ export class CreateInvitationDto {
   schoolId?: string;
 
   @IsOptional()
-  @IsInt()
-  @Type(() => Number)
-  roleId?: number;
+  @IsIn(['teacher', 'school_admin'], { message: 'role debe ser teacher o school_admin' })
+  role?: 'teacher' | 'school_admin';
 
   // Hallazgo IM-3 de la auditoría (y su residual, cerrado en la Ronda 4):
   // antes era @IsString() sin más — un parentId no numérico (ej. "abc")

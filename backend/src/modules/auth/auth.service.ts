@@ -233,15 +233,18 @@ export class AuthService {
 
     // El atajo de retorno SOLO aplica si no mandan ningún invitationToken.
     // Si mandan uno, es una acción explícita de vinculación (puede ser una
-    // invitación NUEVA para un Parent distinto — mismo Google, otro colegio
-    // u otro hijo no emparentado con el vínculo anterior) y debe procesarse
-    // siempre por el flujo normal, sin importar que este User YA esté
-    // vinculado a algún OTRO Parent.
-    const returningParent = existing && !dto.invitationToken
-      ? await this.prisma.parent.findFirst({ where: { userId: existing.id }, select: { id: true } })
+    // invitación NUEVA para un Parent distinto, o para un rol distinto —
+    // mismo Google, otro colegio — y debe procesarse siempre por el flujo
+    // normal, sin importar que este User YA tenga algún otro rol.
+    //
+    // Generalizado a CUALQUIER UserRole (no solo Parent): docentes y
+    // directores también entran por Google+invitación ahora, y también
+    // necesitan el atajo de retorno.
+    const returningRole = existing && !dto.invitationToken
+      ? await this.prisma.userRole.findFirst({ where: { userId: existing.id }, select: { id: true } })
       : null;
 
-    if (existing && returningParent) {
+    if (existing && returningRole) {
       // Atajo de retorno — ya vinculado, sin token nuevo que procesar. Se
       // salta directo a la carga de roles/tokens (paso 6 más abajo). user
       // ya quedó resuelto (= existing).
@@ -258,12 +261,23 @@ export class AuthService {
     });
     if (!invitation) throw new NotFoundException('INVITATION_NOT_FOUND');
 
+    // Invitación GENÉRICA (docente/director) — sin parentId, nada de
+    // Parent/ParentStudent que vincular. Ver _linkGenericInvitation() más
+    // abajo. Se separa ANTES de la validación "debe ser de tipo Parent"
+    // (que antes rechazaba cualquier invitación no-Parent de plano).
+    if (!invitation.parentId) {
+      user = await this._linkGenericInvitation(invitation, existing, payload, googleEmail);
+      // Salta el resto del bloque Parent-específico — ver cierre de este
+      // if/else varias líneas más abajo (después de la transacción Parent).
+      return this._buildLoginResponse(user, dto);
+    }
+
     // Validación estructural: la invitación debe ser de tipo Parent.
     const parentRole = await this.prisma.role.findUnique({
       where: { name: 'parent' },
       select: { id: true },
     });
-    if (!parentRole || invitation.roleId !== parentRole.id || !invitation.parentId) {
+    if (!parentRole || invitation.roleId !== parentRole.id) {
       throw new BadRequestException('INVITATION_INVALID_ROLE');
     }
 
@@ -464,6 +478,12 @@ export class AuthService {
     }
     } // fin else (no era un padre de retorno) — ver comentario del paso 2
 
+    return this._buildLoginResponse(user, dto);
+  }
+
+  // ── Pasos 6-9 de loginWithGoogle, compartidos entre el flujo de Parent
+  //    (arriba) y el de invitación genérica (_linkGenericInvitation) ──
+  private async _buildLoginResponse(user: any, dto: GoogleLoginDto) {
     if (!user) {
       // No debería ocurrir (defensivo): si llegamos aquí sin user, algo en
       // la lógica de arriba está mal — mejor fallar explícito que devolver
@@ -496,7 +516,9 @@ export class AuthService {
       })(),
     ]);
 
-    // 8. Cargar hijos si es padre (misma estructura que login).
+    // 8. Cargar hijos si es padre (misma estructura que login). Docentes y
+    // directores no tienen hijos — rolesData.some(...) da false, children
+    // queda vacío, sin tocar _signAvatarPaths ni nada Student-específico.
     const isParent = rolesData.some((r) => r.roleName === 'parent');
     let children: {
       id: string; firstName: string; lastName: string; code: string;
@@ -534,6 +556,105 @@ export class AuthService {
         children,
       },
     };
+  }
+
+  // ── Invitación GENÉRICA (docente/director) — Google + invitación, sin
+  //    Parent/ParentStudent de por medio. El colegio ya debió crear el
+  //    User institucionalmente (Web Admin → POST /admin/users) ANTES de
+  //    generar la invitación — a diferencia del flujo de Parent, acá NO se
+  //    crea un User nuevo a ciegas: si no existe ya, es un alta a medias
+  //    (invitación generada sin el usuario correspondiente), no un caso
+  //    normal a soportar silenciosamente.
+  private async _linkGenericInvitation(
+    invitation: {
+      id: bigint; roleId: number; schoolId: bigint; email: string | null;
+      usedAt: Date | null; expiresAt: Date;
+    },
+    existing: {
+      id: bigint; email: string; firstName: string; lastName: string;
+      avatar: string | null; needsPasswordChange: boolean;
+      isActive: boolean; deletedAt: Date | null;
+    } | null,
+    payload: any,
+    googleEmail: string,
+  ) {
+    if (invitation.usedAt) {
+      // ¿La consumió ESTE MISMO usuario (doble-tap/reintento)? Idempotente.
+      if (existing) {
+        const alreadyLinked = await this.prisma.userRole.findFirst({
+          where: { userId: existing.id, roleId: invitation.roleId, schoolId: invitation.schoolId },
+          select: { id: true },
+        });
+        if (alreadyLinked) return existing;
+      }
+      throw new ConflictException('INVITATION_ALREADY_USED');
+    }
+    if (invitation.expiresAt < new Date()) throw new BadRequestException('INVITATION_EXPIRED');
+
+    // Misma regla de identidad que Parent: email obligatorio, coincidencia
+    // exacta normalizada. Nunca se permite elegir qué cuenta reclamar.
+    if (!invitation.email) {
+      throw new BadRequestException('INVITATION_INVALID_ROLE');
+    }
+    if (invitation.email.trim().toLowerCase() !== googleEmail) {
+      throw new UnauthorizedException('INVITATION_EMAIL_MISMATCH');
+    }
+
+    let targetUser = existing;
+    if (!targetUser) {
+      const found = await this.prisma.user.findUnique({
+        where: { email: invitation.email.trim().toLowerCase() },
+        select: {
+          id: true, email: true, firstName: true, lastName: true, avatar: true,
+          needsPasswordChange: true, googleSub: true, isActive: true, deletedAt: true,
+        },
+      });
+      if (!found || !found.isActive || found.deletedAt) {
+        throw new NotFoundException(
+          'No existe una cuenta activa para este email. Contacta a tu colegio.',
+        );
+      }
+      if (found.googleSub && found.googleSub !== payload.sub) {
+        // Ya vinculado a OTRA cuenta de Google — rechazar siempre.
+        throw new ConflictException('INVITATION_ALREADY_USED');
+      }
+      targetUser = found;
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Atómico: si dos requests concurrentes del mismo usuario llegan acá,
+      // solo una realmente "gana" el UPDATE — la otra sigue de largo (su
+      // objetivo ya quedó cumplido por la ganadora).
+      await tx.user.updateMany({
+        where: { id: targetUser!.id, googleSub: null },
+        data: { googleSub: payload.sub, isActive: true },
+      });
+
+      await tx.userRole.upsert({
+        where: {
+          userId_roleId_schoolId: {
+            userId: targetUser!.id, roleId: invitation.roleId, schoolId: invitation.schoolId,
+          },
+        },
+        create: { userId: targetUser!.id, roleId: invitation.roleId, schoolId: invitation.schoolId },
+        update: {},
+      });
+
+      const claimed = await tx.schoolInvitation.updateMany({
+        where: { id: invitation.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      if (claimed.count === 0) {
+        const currentInv = await tx.schoolInvitation.findUnique({
+          where: { id: invitation.id },
+          select: { usedAt: true },
+        });
+        if (!currentInv?.usedAt) throw new ConflictException('INVITATION_ALREADY_USED');
+        // Idempotente — la petición gemela ya la consumió, no relanzar.
+      }
+
+      return targetUser!;
+    });
   }
 
   // ── CAMBIO DE CONTRASEÑA ───────────────────────────────

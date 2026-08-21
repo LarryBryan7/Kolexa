@@ -52,7 +52,7 @@ describe('CreateInvitationDto.parentId — @IsBigIntString() (IM-3 + residual)',
   });
 
   it('parentId ausente (invitación genérica sin Parent) sigue siendo válido — @IsOptional() preservado', async () => {
-    const dto = plainToInstance(CreateInvitationDto, { email: 'a@a.com', roleId: 1 });
+    const dto = plainToInstance(CreateInvitationDto, { email: 'a@a.com', role: 'teacher' });
     const errors = await validate(dto);
     expect(errors.find((e) => e.property === 'parentId')).toBeUndefined();
   });

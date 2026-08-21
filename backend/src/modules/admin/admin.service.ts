@@ -227,7 +227,7 @@ export class AdminService {
   }
 
   async createUser(schoolId: bigint, dto: CreateUserDto) {
-    // Buscar el rol por nombre ('teacher' | 'parent')
+    // Buscar el rol por nombre ('teacher' | 'parent' | 'school_admin')
     const role = await this.prisma.role.findUnique({
       where: { name: dto.role },
       select: { id: true },
