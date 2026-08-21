@@ -97,7 +97,15 @@ describe('AuthService.loginWithGoogle — flujo de Parent con invitación', () =
     mockCallOrder.length = 0;
 
     const txMock = {
-      user: { create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      user: {
+        create: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        // Por defecto no hay ningún User pre-existente con ese email — la
+        // mayoría de los tests ejercitan la rama "crea User nuevo". Los que
+        // sí quieren ejercitar la reutilización por email lo pisan.
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
+      },
       userRole: { upsert: jest.fn() },
       parent: { updateMany: jest.fn(), findUnique: jest.fn() },
       parentStudent: { findMany: jest.fn().mockResolvedValue([]) },
@@ -279,6 +287,62 @@ describe('AuthService.loginWithGoogle — flujo de Parent con invitación', () =
       where: { id: INVITATION_ID, usedAt: null },
       data: { usedAt: expect.any(Date) },
     });
+  });
+
+  it('Caso A — User pre-existente con el mismo email (googleSub null, ej. vínculo reseteado): lo reutiliza en vez de crear uno nuevo', async () => {
+    prisma.schoolInvitation.findUnique.mockResolvedValue(validInvitation);
+    prisma.parent.findUnique.mockResolvedValue(validParent);
+    prisma.user.findUnique.mockResolvedValue(null); // por googleSub: no hay "atajo de retorno"
+    prisma._tx.user.findUnique.mockResolvedValue({
+      id: 5n, email: GOOGLE_EMAIL, googleSub: null, isActive: true, deletedAt: null,
+    });
+    prisma._tx.user.update.mockResolvedValue({
+      id: 5n, email: GOOGLE_EMAIL, firstName: 'Padre', lastName: 'De Prueba',
+      avatar: null, needsPasswordChange: false,
+    });
+    prisma._tx.parent.updateMany.mockResolvedValue({ count: 1 });
+    prisma._tx.schoolInvitation.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.loginWithGoogle({ idToken: 'x', invitationToken: 't' } as any);
+
+    expect(result.accessToken).toBe('access');
+    expect(prisma._tx.user.create).not.toHaveBeenCalled();
+    expect(prisma._tx.user.update).toHaveBeenCalledWith({
+      where: { id: 5n },
+      data: { googleSub: GOOGLE_SUB, isActive: true },
+    });
+    expect(prisma._tx.parent.updateMany).toHaveBeenCalledWith({
+      where: { id: PARENT_ID, userId: null },
+      data: { userId: 5n, linkStatus: 'linked' },
+    });
+  });
+
+  it('rechaza si el User pre-existente con ese email ya está vinculado a OTRA cuenta de Google', async () => {
+    prisma.schoolInvitation.findUnique.mockResolvedValue(validInvitation);
+    prisma.parent.findUnique.mockResolvedValue(validParent);
+    prisma.user.findUnique.mockResolvedValue(null);
+    prisma._tx.user.findUnique.mockResolvedValue({
+      id: 5n, email: GOOGLE_EMAIL, googleSub: 'otro-google-sub-distinto', isActive: true, deletedAt: null,
+    });
+
+    await expect(
+      service.loginWithGoogle({ idToken: 'x', invitationToken: 't' } as any),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(prisma._tx.user.create).not.toHaveBeenCalled();
+    expect(prisma._tx.user.update).not.toHaveBeenCalled();
+  });
+
+  it('rechaza si el User pre-existente con ese email está inactivo/eliminado', async () => {
+    prisma.schoolInvitation.findUnique.mockResolvedValue(validInvitation);
+    prisma.parent.findUnique.mockResolvedValue(validParent);
+    prisma.user.findUnique.mockResolvedValue(null);
+    prisma._tx.user.findUnique.mockResolvedValue({
+      id: 5n, email: GOOGLE_EMAIL, googleSub: null, isActive: false, deletedAt: null,
+    });
+
+    await expect(
+      service.loginWithGoogle({ idToken: 'x', invitationToken: 't' } as any),
+    ).rejects.toMatchObject({ status: 401 });
   });
 
   it('I-2 — bcrypt.hash del password aleatorio corre ANTES de abrir la transacción, no dentro', async () => {
