@@ -1156,8 +1156,16 @@ model SchoolInvitation {
   // necesitarlo). Nullable a nivel de columna para no romper compatibilidad.
   email     String?   @db.VarChar(128)
   roleId    Int       @map("role_id")
-  // token único enviado por email/link de invitación
+  // token único enviado por email/link de invitación (64 hex, 256 bits) —
+  // pensado para el deep link (kolexa://register?token=...), que hoy
+  // ningún cliente dispara todavía. No único a nivel de constraint global
+  // (a diferencia de `token`): un código de 6 dígitos tiene un espacio
+  // demasiado chico para reservarlo para siempre incluso después de
+  // usado/vencido — la unicidad real se valida en el service, solo entre
+  // invitaciones ACTIVAS (mismo criterio que ya usa la invitación
+  // duplicada por email/parentId).
   token     String    @unique @db.VarChar(64)
+  shortCode String?   @map("short_code") @db.VarChar(6)
   invitedBy BigInt?   @map("invited_by")
   // parentId: liga la invitación a un Parent institucional concreto.
   // Nullable porque las invitaciones genéricas (ej. docentes) no aplican.
@@ -1172,6 +1180,7 @@ model SchoolInvitation {
   parent  Parent? @relation(fields: [parentId], references: [id], onDelete: SetNull)
 
   @@index([parentId])
+  @@index([shortCode])
   @@map("school_invitations")
 }
 

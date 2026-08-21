@@ -256,8 +256,11 @@ export class AuthService {
       throw new UnauthorizedException('INVITATION_REQUIRED');
     }
 
-    const invitation = await this.prisma.schoolInvitation.findUnique({
-      where: { token: dto.invitationToken },
+    // dto.invitationToken acepta el token largo (64 hex) O el código corto
+    // (6 dígitos) — cualquiera de los dos resuelve la misma invitación
+    // (ver InvitationsService.validate(), mismo criterio).
+    const invitation = await this.prisma.schoolInvitation.findFirst({
+      where: { OR: [{ token: dto.invitationToken }, { shortCode: dto.invitationToken }] },
     });
     if (!invitation) throw new NotFoundException('INVITATION_NOT_FOUND');
 
