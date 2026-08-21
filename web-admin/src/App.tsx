@@ -7,7 +7,6 @@ import { InstitucionPage } from '@/pages/institucion-page';
 import { AulasPage } from '@/pages/aulas-page';
 import { CursosPage } from '@/pages/cursos-page';
 import { UsuariosPage } from '@/pages/usuarios-page';
-import { DocentesPage } from '@/pages/docentes-page';
 import { AlumnosPage } from '@/pages/alumnos-page';
 import { PadresPage } from '@/pages/padres-page';
 import { ImportarPage } from '@/pages/importar-page';
@@ -28,7 +27,6 @@ export default function App() {
         <Route path="/aulas" element={<AulasPage />} />
         <Route path="/cursos" element={<CursosPage />} />
         <Route path="/usuarios" element={<UsuariosPage />} />
-        <Route path="/docentes" element={<DocentesPage />} />
         <Route path="/alumnos" element={<AlumnosPage />} />
         <Route path="/padres" element={<PadresPage />} />
         <Route path="/importar" element={<ImportarPage />} />
