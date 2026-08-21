@@ -20,8 +20,6 @@ describe('registerWithToken — consumo de invitación (regresión de concurrenc
   let authService: AuthService;
   let invitationsService: InvitationsService;
   let schoolId: bigint;
-  const TEACHER_ROLE_ID = 1;
-  const PARENT_ROLE_ID = 3;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -52,7 +50,7 @@ describe('registerWithToken — consumo de invitación (regresión de concurrenc
 
   it('flujo feliz sigue funcionando tras el fix (docente, invitación genérica)', async () => {
     const email = 'docente@rwt-test.kolexa';
-    const inv = await invitationsService.create({ schoolId, email, roleId: TEACHER_ROLE_ID }, 1n);
+    const inv = await invitationsService.create({ schoolId, email, role: 'teacher' }, 1n);
 
     const result = await authService.registerWithToken({
       token: inv.token, password: 'Segura123', firstName: 'Doc', lastName: 'Ente',
@@ -65,7 +63,7 @@ describe('registerWithToken — consumo de invitación (regresión de concurrenc
 
   it('10 peticiones concurrentes con el MISMO token genérico: 1 éxito, 9 rechazos, sin corrupción', async () => {
     const email = 'concurrente@rwt-test.kolexa';
-    const inv = await invitationsService.create({ schoolId, email, roleId: TEACHER_ROLE_ID }, 1n);
+    const inv = await invitationsService.create({ schoolId, email, role: 'teacher' }, 1n);
 
     const results = await Promise.allSettled(
       Array.from({ length: 10 }, (_, i) =>
@@ -92,7 +90,7 @@ describe('registerWithToken — consumo de invitación (regresión de concurrenc
       data: { schoolId, firstName: 'Padre', lastName: 'RWT', dni: 'RWT-001', email: 'padre@rwt-test.kolexa' },
     });
     const inv = await invitationsService.create(
-      { schoolId, email: parent.email!, roleId: PARENT_ROLE_ID, parentId: parent.id },
+      { schoolId, email: parent.email!, parentId: parent.id },
       1n,
     );
 

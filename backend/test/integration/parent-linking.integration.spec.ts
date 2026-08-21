@@ -97,7 +97,7 @@ describe('Vinculación de padres — integración con Postgres real', () => {
 
   async function makeInvitation(parentId: bigint, email: string) {
     const inv = await invitationsService.create(
-      { schoolId, email, roleId: PARENT_ROLE_ID, parentId },
+      { schoolId, email, parentId },
       1n,
     );
     return inv.token;
@@ -170,7 +170,7 @@ describe('Vinculación de padres — integración con Postgres real', () => {
       data: { schoolId: school2.id, firstName: 'Padre', lastName: 'Colegio2', dni: 'IT-003B', email },
     });
     const inv2 = await invitationsService.create(
-      { schoolId: school2.id, email, roleId: PARENT_ROLE_ID, parentId: parent2.id },
+      { schoolId: school2.id, email, parentId: parent2.id },
       1n,
     );
     await authService.loginWithGoogle({ idToken: 'x', invitationToken: inv2.token } as any);
@@ -231,7 +231,7 @@ describe('Vinculación de padres — integración con Postgres real', () => {
     const parent = await makeParent('IT-006');
     const email = parent.email!;
     const inv = await invitationsService.create(
-      { schoolId, email, roleId: PARENT_ROLE_ID, parentId: parent.id },
+      { schoolId, email, parentId: parent.id },
       1n,
     );
     // Forzamos expiración directa en BD (sin esperar 7 días reales).

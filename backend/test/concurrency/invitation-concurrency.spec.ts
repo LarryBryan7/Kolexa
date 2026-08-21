@@ -56,7 +56,6 @@ describe('Concurrencia real — consumo de invitación (Postgres, sin mocks de B
   let authService: AuthService;
   let invitationsService: InvitationsService;
   let schoolId: bigint;
-  const PARENT_ROLE_ID = 3;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -101,7 +100,7 @@ describe('Concurrencia real — consumo de invitación (Postgres, sin mocks de B
     });
     const email = parent.email!;
     const sub = crypto.randomUUID();
-    const inv = await invitationsService.create({ schoolId, email, roleId: PARENT_ROLE_ID, parentId: parent.id }, 1n);
+    const inv = await invitationsService.create({ schoolId, email, parentId: parent.id }, 1n);
 
     mockVerifyIdToken.mockResolvedValue({
       getPayload: () => ({
@@ -143,7 +142,7 @@ describe('Concurrencia real — consumo de invitación (Postgres, sin mocks de B
     const correctEmail = parent.email!;
     const correctSub = crypto.randomUUID();
     const inv = await invitationsService.create(
-      { schoolId, email: correctEmail, roleId: PARENT_ROLE_ID, parentId: parent.id },
+      { schoolId, email: correctEmail, parentId: parent.id },
       1n,
     );
 

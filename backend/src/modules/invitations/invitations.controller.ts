@@ -39,7 +39,7 @@ export class InvitationsController {
       {
         schoolId: user.schoolId!,
         email: dto.email,
-        roleId: dto.roleId, // opcional cuando dto.parentId está presente
+        role: dto.role, // opcional cuando dto.parentId está presente
         parentId: dto.parentId ? BigInt(dto.parentId) : undefined,
       },
       user.sub,
@@ -84,5 +84,15 @@ export class InvitationsController {
     // colegios (hallazgo B-2): sin esto, cualquier school_admin podía leer
     // el token/email de invitación de un padre de otro colegio.
     return this.service.findActiveForParent(user.schoolId!, parentId);
+  }
+
+  // Equivalente al de arriba, para invitaciones GENÉRICAS (docente/director).
+  @Get('user/:userId')
+  @Roles('school_admin')
+  findActiveForUser(
+    @CurrentUser() user: UserPayload,
+    @Param('userId', ParseBigIntPipe) userId: bigint,
+  ) {
+    return this.service.findActiveForUser(user.schoolId!, userId);
   }
 }
