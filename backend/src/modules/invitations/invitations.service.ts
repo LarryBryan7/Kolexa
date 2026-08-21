@@ -7,7 +7,17 @@ import {
 import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 
-const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
+// 72h en vez de los 7 días originales — el código corto de 6 dígitos tiene
+// bastante menos entropía que el token de 256 bits, así que se compensa
+// con una ventana de validez más chica (ver conversación de diseño: el
+// email+Google Sign-In sigue siendo el ancla real de seguridad, esto es
+// una defensa adicional, no la única).
+const INVITE_TTL_MS = 72 * 60 * 60 * 1000;
+
+// Reintentos ante colisión de shortCode. Con 1.000.000 de combinaciones y
+// un número razonable de invitaciones activas a la vez, la probabilidad de
+// colisión es minúscula — esto es solo una red de seguridad.
+const SHORT_CODE_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class InvitationsService {
@@ -77,6 +87,7 @@ export class InvitationsService {
     }
 
     const token = crypto.randomBytes(32).toString('hex');
+    const shortCode = await this._generateUniqueShortCode();
     const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
 
     await this.prisma.schoolInvitation.create({
@@ -85,6 +96,7 @@ export class InvitationsService {
         email: data.email ?? null,
         roleId,
         token,
+        shortCode,
         invitedBy,
         parentId: data.parentId ?? null,
         expiresAt,
@@ -96,15 +108,38 @@ export class InvitationsService {
       role: roleName,
       school: school.name,
       token,
+      shortCode,
       expiresAt,
       // El cliente Flutter abre este deep link al recibirlo por email/WhatsApp
+      // (todavía sin usar por ningún flujo real — ver nota en el modelo).
       inviteLink: `kolexa://register?token=${token}`,
     };
   }
 
-  async validate(token: string) {
-    const inv = await this.prisma.schoolInvitation.findUnique({
-      where: { token },
+  // Código de 6 dígitos, criptográficamente aleatorio (crypto.randomInt,
+  // no Math.random — aunque es un código corto, no hay razón para que sea
+  // predecible). Único solo entre invitaciones ACTIVAS: un código usado o
+  // vencido puede reutilizarse más adelante, el espacio de 1M no alcanza
+  // para reservarlos para siempre.
+  private async _generateUniqueShortCode(): Promise<string> {
+    for (let attempt = 0; attempt < SHORT_CODE_MAX_ATTEMPTS; attempt++) {
+      const candidate = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+      const clash = await this.prisma.schoolInvitation.findFirst({
+        where: { shortCode: candidate, usedAt: null, expiresAt: { gt: new Date() } },
+        select: { id: true },
+      });
+      if (!clash) return candidate;
+    }
+    throw new ConflictException('No se pudo generar un código único, intenta de nuevo');
+  }
+
+  // code: acepta el token largo (64 hex) O el código corto (6 dígitos) —
+  // cualquiera de los dos resuelve la misma invitación. El nombre del
+  // parámetro es genérico a propósito: el cliente no necesita saber cuál
+  // de los dos formatos mandó.
+  async validate(code: string) {
+    const inv = await this.prisma.schoolInvitation.findFirst({
+      where: { OR: [{ token: code }, { shortCode: code }] },
       include: {
         school: { select: { name: true, logoUrl: true } },
         role: { select: { name: true } },
@@ -141,7 +176,7 @@ export class InvitationsService {
 
     return this.prisma.schoolInvitation.findFirst({
       where: { parentId, schoolId, usedAt: null, expiresAt: { gt: new Date() } },
-      select: { token: true, expiresAt: true, email: true },
+      select: { token: true, shortCode: true, expiresAt: true, email: true },
     });
   }
 
@@ -168,7 +203,7 @@ export class InvitationsService {
         usedAt: null,
         expiresAt: { gt: new Date() },
       },
-      select: { token: true, expiresAt: true, email: true },
+      select: { token: true, shortCode: true, expiresAt: true, email: true },
     });
   }
 }

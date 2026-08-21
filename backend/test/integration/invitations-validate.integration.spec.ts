@@ -98,4 +98,36 @@ describe('POST /invitations/validate — contrato y lógica (Postgres real)', ()
     await prisma.schoolInvitation.update({ where: { token: inv.token }, data: { usedAt: new Date() } });
     await expect(invitationsService.validate(inv.token)).rejects.toMatchObject({ status: 400 });
   });
+
+  describe('código corto (6 dígitos) — alias del token', () => {
+    // role: 'teacher' (no parentId) — evita chocar con la invitación ACTIVA
+    // que ya dejó el test "token válido" de arriba, que sí usa el mismo
+    // parentId compartido de este archivo (unicidad por parentId, no email).
+    it('create() genera un shortCode de 6 dígitos junto con el token', async () => {
+      const inv = await invitationsService.create(
+        { schoolId, email: 'im6-shortcode@idor-test.kolexa', role: 'teacher' },
+        1n,
+      );
+      expect(inv.shortCode).toMatch(/^\d{6}$/);
+    });
+
+    it('validate() resuelve la MISMA invitación por shortCode, no solo por token', async () => {
+      const inv = await invitationsService.create(
+        { schoolId, email: 'im6-shortcode-validate@idor-test.kolexa', role: 'teacher' },
+        1n,
+      );
+      const byToken = await invitationsService.validate(inv.token);
+      const byShortCode = await invitationsService.validate(inv.shortCode);
+      expect(byShortCode).toEqual(byToken);
+    });
+
+    it('shortCode ya usado → BadRequestException (400), igual que el token', async () => {
+      const inv = await invitationsService.create(
+        { schoolId, email: 'im6-shortcode-used@idor-test.kolexa', role: 'teacher' },
+        1n,
+      );
+      await prisma.schoolInvitation.update({ where: { token: inv.token }, data: { usedAt: new Date() } });
+      await expect(invitationsService.validate(inv.shortCode)).rejects.toMatchObject({ status: 400 });
+    });
+  });
 });

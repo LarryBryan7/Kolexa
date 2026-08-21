@@ -105,10 +105,15 @@ describe('AuthService.loginWithGoogle — flujo de Parent con invitación', () =
       schoolInvitation: { updateMany: jest.fn(), findUnique: jest.fn() },
     };
 
+    // findFirst es alias del mismo mock que findUnique: loginWithGoogle()
+    // busca la invitación con findFirst (OR token/shortCode) — así, cuando
+    // un test configura .findUnique.mockResolvedValue(x), .findFirst
+    // devuelve exactamente lo mismo sin tener que tocar cada test.
+    const schoolInvitationFind = jest.fn();
     prisma = {
       user: { findUnique: jest.fn() },
       role: { findUnique: jest.fn().mockResolvedValue({ id: PARENT_ROLE_ID }) },
-      schoolInvitation: { findUnique: jest.fn() },
+      schoolInvitation: { findUnique: schoolInvitationFind, findFirst: schoolInvitationFind },
       // findFirst por defecto resuelve null (nadie es "padre/usuario de
       // retorno" a menos que un test lo pise explícitamente) — así el resto
       // de los tests, que ejercitan el flujo de invitación de siempre, no
@@ -575,7 +580,11 @@ describe('AuthService.loginWithGoogle — invitación GENÉRICA (docente/directo
           return Promise.resolve(null);
         }),
       },
-      schoolInvitation: { findUnique: jest.fn().mockResolvedValue(genericInvitation) },
+      // findFirst alias de findUnique — ver comentario equivalente arriba.
+      schoolInvitation: (() => {
+        const find = jest.fn().mockResolvedValue(genericInvitation);
+        return { findUnique: find, findFirst: find };
+      })(),
       parent: { findFirst: jest.fn().mockResolvedValue(null) },
       userRole: { findFirst: jest.fn().mockResolvedValue(null) },
       $transaction: jest.fn(async (cb: any) => cb(txMock)),
