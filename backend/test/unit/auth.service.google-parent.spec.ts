@@ -119,7 +119,7 @@ describe('AuthService.loginWithGoogle — flujo de Parent con invitación', () =
     // devuelve exactamente lo mismo sin tener que tocar cada test.
     const schoolInvitationFind = jest.fn();
     prisma = {
-      user: { findUnique: jest.fn() },
+      user: { findUnique: jest.fn(), update: jest.fn() },
       role: { findUnique: jest.fn().mockResolvedValue({ id: PARENT_ROLE_ID }) },
       schoolInvitation: { findUnique: schoolInvitationFind, findFirst: schoolInvitationFind },
       // findFirst por defecto resuelve null (nadie es "padre/usuario de
@@ -295,6 +295,7 @@ describe('AuthService.loginWithGoogle — flujo de Parent con invitación', () =
     prisma.user.findUnique.mockResolvedValue(null); // por googleSub: no hay "atajo de retorno"
     prisma._tx.user.findUnique.mockResolvedValue({
       id: 5n, email: GOOGLE_EMAIL, googleSub: null, isActive: true, deletedAt: null,
+      firstName: 'Nombre viejo', lastName: 'Apellido viejo', avatar: null,
     });
     prisma._tx.user.update.mockResolvedValue({
       id: 5n, email: GOOGLE_EMAIL, firstName: 'Padre', lastName: 'De Prueba',
@@ -309,7 +310,17 @@ describe('AuthService.loginWithGoogle — flujo de Parent con invitación', () =
     expect(prisma._tx.user.create).not.toHaveBeenCalled();
     expect(prisma._tx.user.update).toHaveBeenCalledWith({
       where: { id: 5n },
-      data: { googleSub: GOOGLE_SUB, isActive: true },
+      data: {
+        googleSub: GOOGLE_SUB,
+        isActive: true,
+        // Refrescados con los datos del payload de Google (given_name/
+        // family_name/picture) — validPayload.picture es null, así que el
+        // avatar cae al valor viejo (fallback), pero nombre/apellido sí se
+        // actualizan porque validPayload sí los trae.
+        firstName: 'Padre',
+        lastName: 'De Prueba',
+        avatar: null,
+      },
     });
     expect(prisma._tx.parent.updateMany).toHaveBeenCalledWith({
       where: { id: PARENT_ID, userId: null },
@@ -434,6 +445,38 @@ describe('AuthService.loginWithGoogle — flujo de Parent con invitación', () =
       // No toca nada de invitación ni abre transacción — ya estaba todo vinculado.
       expect(prisma.schoolInvitation.findUnique).not.toHaveBeenCalled();
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('atajo de retorno — refresca el avatar si Google trae una foto distinta a la guardada (bug real: quedaba en null para siempre)', async () => {
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({ ...validPayload, picture: 'https://lh3.googleusercontent.com/nueva-foto' }),
+      });
+      prisma.user.findUnique.mockResolvedValue({
+        id: 7n, email: GOOGLE_EMAIL, firstName: 'Padre', lastName: 'De Prueba',
+        avatar: null, needsPasswordChange: false, isActive: true, deletedAt: null,
+      });
+      prisma.userRole.findFirst.mockResolvedValue({ id: 1n });
+      prisma.user.update.mockResolvedValue({ avatar: 'https://lh3.googleusercontent.com/nueva-foto' });
+
+      await service.loginWithGoogle({ idToken: 'x' } as any);
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 7n },
+        data: { avatar: 'https://lh3.googleusercontent.com/nueva-foto' },
+        select: { avatar: true },
+      });
+    });
+
+    it('atajo de retorno — NO llama a update si Google no trae foto (picture null)', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 7n, email: GOOGLE_EMAIL, firstName: 'Padre', lastName: 'De Prueba',
+        avatar: null, needsPasswordChange: false, isActive: true, deletedAt: null,
+      });
+      prisma.userRole.findFirst.mockResolvedValue({ id: 1n });
+
+      await service.loginWithGoogle({ idToken: 'x' } as any);
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
 
     it('si SÍ mandan invitationToken, NO aplica el atajo aunque ya haya un Parent vinculado (puede ser una vinculación nueva para otro Parent)', async () => {

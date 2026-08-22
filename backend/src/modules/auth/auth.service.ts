@@ -248,6 +248,19 @@ export class AuthService {
       // Atajo de retorno — ya vinculado, sin token nuevo que procesar. Se
       // salta directo a la carga de roles/tokens (paso 6 más abajo). user
       // ya quedó resuelto (= existing).
+      //
+      // Refrescar el avatar acá también: Google puede devolver una foto
+      // nueva (o la primera, si el campo había quedado en null por algún
+      // motivo — ej. un reset manual para pruebas). Sin esto, un usuario
+      // que ya volvía nunca actualizaba su avatar, ni una sola vez.
+      if (payload.picture && payload.picture !== existing.avatar) {
+        const updated = await this.prisma.user.update({
+          where: { id: existing.id },
+          data: { avatar: payload.picture },
+          select: { avatar: true },
+        });
+        user = { ...existing, avatar: updated.avatar };
+      }
     } else {
     // 3. Invitación obligatoria para el flujo de padre (primera vinculación
     //    o Caso C más abajo). No se crea NINGÚN User antes de validar esto
@@ -378,7 +391,17 @@ export class AuthService {
               }
               txUser = await tx.user.update({
                 where: { id: byEmail.id },
-                data: { googleSub: payload.sub, isActive: true },
+                data: {
+                  googleSub: payload.sub,
+                  isActive: true,
+                  // Refrescar con los datos actuales de Google — si no, un
+                  // User reutilizado (ej. reseteado para volver a probar)
+                  // se queda con el nombre/avatar viejo o vacío para
+                  // siempre, aunque el login con Google haya sido exitoso.
+                  firstName: payload.given_name ?? byEmail.firstName,
+                  lastName: payload.family_name ?? byEmail.lastName,
+                  avatar: payload.picture ?? byEmail.avatar,
+                },
               });
             } else {
               txUser = await tx.user.create({
@@ -657,7 +680,11 @@ export class AuthService {
       // objetivo ya quedó cumplido por la ganadora).
       await tx.user.updateMany({
         where: { id: targetUser!.id, googleSub: null },
-        data: { googleSub: payload.sub, isActive: true },
+        // avatar: se refresca con la foto de Google — a diferencia de
+        // firstName/lastName (curados por el admin al crear al docente/
+        // director), el avatar nunca lo carga el admin, así que no hay
+        // nada que preservar y sin esto se queda en null para siempre.
+        data: { googleSub: payload.sub, isActive: true, avatar: payload.picture ?? undefined },
       });
 
       await tx.userRole.upsert({
