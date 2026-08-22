@@ -106,7 +106,11 @@ class _LoginPageState extends State<LoginPage> {
   }) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: _kTextGray, fontSize: 14),
+      hintStyle: TextStyle(
+        color: _kTextGray.withValues(alpha: 0.85),
+        fontSize: 16,
+        fontWeight: FontWeight.w500,
+      ),
       prefixIcon: Icon(icon, color: _kIconGray, size: 17),
       prefixIconConstraints: const BoxConstraints(minWidth: 50, minHeight: 17),
       filled: true,
@@ -162,7 +166,7 @@ class _LoginPageState extends State<LoginPage> {
               child: Column(
                 children: [
                   // ── Logo K, o avatar si ya vinculó antes ──
-                  const SizedBox(height: 58),
+                  const SizedBox(height: 32),
                   if (_isReturningUser)
                     Center(
                       child: _LoginAvatar(
@@ -173,29 +177,49 @@ class _LoginPageState extends State<LoginPage> {
                     )
                   else
                     const Center(
-                      child: KolexaLogo(height: 53, color: _kPrimary),
+                      // Wordmark completo "Kolexa" (no solo el isotipo K) —
+                      // la "K" en color primario, "olexa" en gris, tal como
+                      // en el frame "04 — Login Padre" de Figma.
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          KolexaLogo(height: 25, color: _kPrimary),
+                          Text(
+                            'olexa',
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              color: _kTextGray,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
 
                   // ── Título ────────────────────────────────
-                  const SizedBox(height: 19),
+                  // Figma: 149px entre el logo y el título en el estado de
+                  // primera vez (frame "04 — Login Padre") — el estado de
+                  // usuario que vuelve no está en ese frame, se mantiene un
+                  // espaciado más compacto para ese caso.
+                  SizedBox(height: _isReturningUser ? 19 : 149),
                   Text(
                     _isReturningUser
                         ? 'Hola ${OnboardingService.instance.lastLoginFirstName ?? ''} 👋'
-                        : 'Ingresa a Kolexa',
+                        : 'Bienvenido a Kolexa',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w700,
-                      color: _kTextDark,
+                      color: _isReturningUser ? _kTextDark : _kTextGray,
                     ),
                   ),
 
                   // ── Subtítulo ─────────────────────────────
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 12),
                   Text(
                     _isReturningUser
                         ? 'Continúa viendo las novedades de tu colegio en un solo lugar'
-                        : 'Brindanos el código que te generó tu colegio y continúa con Google',
+                        : 'Brindanos tu código por favor, y continúa con tu cuenta de Google',
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 15, color: _kTextGray),
                   ),
@@ -207,7 +231,7 @@ class _LoginPageState extends State<LoginPage> {
                   // el campo de nuevo no tiene sentido, ni después de un
                   // logout explícito.
                   if (!_isReturningUser) ...[
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 57),
                     SizedBox(
                       height: 52,
                       child: TextFormField(
@@ -227,7 +251,7 @@ class _LoginPageState extends State<LoginPage> {
                           letterSpacing: 6,
                         ),
                         decoration: _fieldDecoration(
-                          hint: 'Código de 6 dígitos',
+                          hint: '777678',
                           icon: Icons.key_outlined,
                         ).copyWith(counterText: ''),
                       ),
@@ -235,15 +259,15 @@ class _LoginPageState extends State<LoginPage> {
                   ],
 
                   // ── Continuar con Google ──────────────────
-                  const SizedBox(height: 20),
+                  SizedBox(height: _isReturningUser ? 20 : 25),
                   SizedBox(
                     width: double.infinity,
-                    height: 48,
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: _kTextDark,
-                        side: const BorderSide(color: _kBorder),
+                    height: 52,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kPrimary,
+                        disabledBackgroundColor: const Color(0xFF6F60AA),
+                        foregroundColor: Colors.white,
                         elevation: 0,
                         padding: EdgeInsets.zero,
                         shape: RoundedRectangleBorder(
@@ -257,7 +281,7 @@ class _LoginPageState extends State<LoginPage> {
                               width: 20,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: _kPrimary,
+                                color: Colors.white,
                               ),
                             )
                           : Row(
@@ -274,7 +298,7 @@ class _LoginPageState extends State<LoginPage> {
                                   style: TextStyle(
                                     fontWeight: FontWeight.w600,
                                     fontSize: 14,
-                                    color: _kTextDark,
+                                    color: Colors.white,
                                   ),
                                 ),
                               ],
