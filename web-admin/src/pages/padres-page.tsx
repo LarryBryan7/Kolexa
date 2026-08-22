@@ -306,7 +306,7 @@ export function PadresPage() {
         title="Desvincular alumno"
         description={
           unlinkTarget
-            ? `¿Seguro que querés desvincular a ${unlinkTarget.parentName} de ${[unlinkTarget.link.student?.firstName, unlinkTarget.link.student?.lastName].filter(Boolean).join(' ')}? Si la cuenta ya estaba vinculada, el padre perderá acceso a este alumno desde la app.`
+            ? `¿Seguro que deseas desvincular a ${unlinkTarget.parentName} de ${[unlinkTarget.link.student?.firstName, unlinkTarget.link.student?.lastName].filter(Boolean).join(' ')}? Si la cuenta ya estaba vinculada, el padre perderá acceso a este alumno desde la app.`
             : undefined
         }
         confirmLabel="Desvincular"
@@ -387,7 +387,7 @@ function InvitationDialog({ parent, onClose }: { parent: Parent; onClose: () => 
           <div className="space-y-4">
             <div className="rounded-md border bg-muted/30 p-4 text-center">
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Código (dictáselo al padre o compartilo)
+                Código (indícaselo al padre o compártelo)
               </p>
               <div className="flex items-center justify-center gap-2">
                 <code className="rounded bg-background px-4 py-2 text-2xl font-bold tracking-[0.3em]">

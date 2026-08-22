@@ -252,7 +252,7 @@ export function UsuariosPage() {
             <DialogDescription>
               {editing
                 ? 'Actualiza los datos del usuario.'
-                : 'Completa los datos para crear un nuevo usuario. Después podés generar su invitación para que inicie sesión con Google.'}
+                : 'Completa los datos para crear un nuevo usuario. Después puedes generar su invitación para que inicie sesión con Google.'}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
@@ -372,7 +372,7 @@ function InvitationDialog({ user, onClose }: { user: User; onClose: () => void }
           <div className="space-y-4">
             <div className="rounded-md border bg-muted/30 p-4 text-center">
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Código (dictáselo o compartilo)
+                Código (indícaselo o compártelo)
               </p>
               <div className="flex items-center justify-center gap-2">
                 <code className="rounded bg-background px-4 py-2 text-2xl font-bold tracking-[0.3em]">
@@ -394,7 +394,7 @@ function InvitationDialog({ user, onClose }: { user: User; onClose: () => void }
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Todavía no tiene una invitación activa. Generá una para que pueda vincular su cuenta.
+            Todavía no tiene una invitación activa. Genera una para que pueda vincular su cuenta.
           </p>
         )}
 

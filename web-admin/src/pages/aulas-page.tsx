@@ -460,7 +460,7 @@ function ManageEnrollmentsDialog({ classroom, onClose }: { classroom: Classroom;
         onOpenChange={(open) => !open && setUnenrollTarget(null)}
         title="Dar de baja al alumno"
         description={
-          unenrollTarget ? `¿Seguro que querés dar de baja a ${unenrollTarget.name} de esta aula?` : undefined
+          unenrollTarget ? `¿Seguro que deseas dar de baja a ${unenrollTarget.name} de esta aula?` : undefined
         }
         confirmLabel="Dar de baja"
         destructive
