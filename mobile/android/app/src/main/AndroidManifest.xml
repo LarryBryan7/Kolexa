@@ -54,6 +54,12 @@
                 <data android:scheme="kolexa" android:host="register"/>
             </intent-filter>
         </activity>
+        <!-- image_cropper: activity nativa (uCrop) para recortar fotos -->
+        <activity
+            android:name="com.yalantis.ucrop.UCropActivity"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+
         <!-- FCM: servicio que recibe mensajes en segundo plano -->
         <service
             android:name="com.google.firebase.messaging.FirebaseMessagingService"

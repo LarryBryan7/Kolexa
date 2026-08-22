@@ -97,6 +97,7 @@ dependencies:
   # flutter_local_notifications: muestra notificaciones en primer plano
   # (FCM no las muestra automáticamente cuando la app está abierta).
   flutter_local_notifications: ^17.2.3
+  image_cropper: ^12.2.1
 
 
 dev_dependencies:
@@ -108,6 +109,19 @@ dev_dependencies:
   bloc_test: ^9.1.0
   # mocktail: crear mocks en los tests sin generación de código
   mocktail: ^1.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# Ícono de la app (isotipo "K" morado de Kolexa) — generado con
+# `dart run flutter_launcher_icons` a partir de un solo PNG exportado de
+# Figma (frame "icon — A — Violeta Kolexa (original)").
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons_src/kolexa_icon.png"
+  # iOS no permite transparencia en el ícono de la App Store — el PNG
+  # fuente tiene esquinas transparentes (rounded square recortado), así
+  # que acá se aplanan a un fondo sólido.
+  remove_alpha_ios: true
 
 flutter:
   uses-material-design: true
