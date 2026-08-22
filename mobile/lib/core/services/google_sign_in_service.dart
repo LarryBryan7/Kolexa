@@ -48,9 +48,20 @@ class GoogleSignInService {
   // ── signIn ────────────────────────────────────────────────
   // Abre el selector de cuentas de Google y devuelve el ID Token.
   //
+  // signOut() previo a propósito: sin esto, si un intento anterior falló en
+  // NUESTRO backend (ej. INVITATION_EMAIL_MISMATCH — cuenta de Google
+  // correcta, pero no es la que espera la invitación), el plugin
+  // google_sign_in sigue considerando esa cuenta "activa" y la reutiliza en
+  // silencio en el siguiente toque, sin volver a mostrar el selector — el
+  // usuario queda sin forma de elegir otra cuenta desde la UI. Quien llama
+  // a signIn() SIEMPRE está en LoginPage sin sesión propia todavía (si ya
+  // estuviera autenticado en Kolexa, el router lo habría mandado a home),
+  // así que forzar el selector de cuentas en cada intento es seguro.
+  //
   // Devuelve: el ID Token (String) listo para enviar al backend.
   // Lanza:    Exception si el usuario cancela o hay un error.
   Future<String> signIn() async {
+    await _googleSignIn.signOut();
     final account = await _googleSignIn.signIn();
     if (account == null) {
       // El usuario canceló el selector de cuentas.

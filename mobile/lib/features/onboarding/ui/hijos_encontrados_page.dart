@@ -1,15 +1,20 @@
 // ============================================================
-// hijos_encontrados_page.dart — "04b — Padre: hijos encontrados"
+// hijos_encontrados_page.dart — "04b/04c — Padre: hijos encontrados"
 // ============================================================
 // Se muestra UNA sola vez, justo después del primer login con Google
 // exitoso (ver AuthBloc._onGoogleLogin / AuthState.isFirstGoogleLogin).
 // Lista los hijos ya vinculados y deja agregarles una foto de perfil,
 // opcional — "continuar" siempre funciona, tengan foto o no.
+//
+// Con un solo hijo usa el layout "04c" (tarjeta grande, texto
+// personalizado con su nombre); con dos o más, el layout "04b" (lista de
+// tarjetas).
 // ============================================================
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/router/app_router.dart';
@@ -18,10 +23,14 @@ import '../../auth/bloc/auth_event.dart';
 import '../../auth/data/models/user_model.dart';
 import '../../classroom/data/repository/classroom_repository.dart';
 
-const _kBg       = Color(0xFFF7F6F3);
-const _kPrimary  = Color(0xFF5B4A9E);
-const _kTextDark = Color(0xFF1E1B29);
-const _kTextGray = Color(0xFF666666);
+const _kBg          = Color(0xFFF7F6F3);
+const _kPrimary     = Color(0xFF5B4A9E);
+const _kTextDark    = Color(0xFF1E1B29);
+const _kTextGray    = Color(0xFF666666);
+const _kAvatarBg    = Color(0xFFD9D9D9);
+const _kBadgeBg     = Color(0xFFEDE8FA);
+const _kInfoBadgeBg = Color(0xFFDFEBF9);
+const _kInfoBlue    = Color(0xFF1671E7);
 
 class HijosEncontradosPage extends StatefulWidget {
   const HijosEncontradosPage({super.key, required this.user});
@@ -45,43 +54,46 @@ class _HijosEncontradosPageState extends State<HijosEncontradosPage> {
   }
 
   Future<void> _pickAndUpload(ChildModel child) async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined, color: _kPrimary),
-              title: const Text('Tomar foto'),
-              onTap: () => Navigator.pop(ctx, ImageSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined, color: _kPrimary),
-              title: const Text('Elegir de la galería'),
-              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (source == null || !mounted) return;
-
+    // Directo a la galería — sin bottom sheet de cámara/galería. La foto de
+    // perfil de un hijo casi siempre ya existe en el rollo del padre.
     final picked = await ImagePicker().pickImage(
-      source: source,
-      maxWidth: 800,
-      maxHeight: 800,
-      imageQuality: 80,
+      source: ImageSource.gallery,
+      maxWidth: 1200,
+      maxHeight: 1200,
+      imageQuality: 90,
     );
     if (picked == null || !mounted) return;
 
+    // Recorte cuadrado bloqueado (mismo formato que la foto de perfil de
+    // WhatsApp) — el usuario no puede cambiar la proporción, solo mover/
+    // acercar el encuadre dentro del cuadrado.
+    final cropped = await ImageCropper().cropImage(
+      sourcePath: picked.path,
+      aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+      compressFormat: ImageCompressFormat.jpg,
+      compressQuality: 90,
+      uiSettings: [
+        AndroidUiSettings(
+          toolbarTitle: 'Ajustar foto',
+          toolbarColor: _kPrimary,
+          toolbarWidgetColor: Colors.white,
+          initAspectRatio: CropAspectRatioPreset.square,
+          lockAspectRatio: true,
+          hideBottomControls: true,
+        ),
+        IOSUiSettings(
+          title: 'Ajustar foto',
+          aspectRatioLockEnabled: true,
+          resetAspectRatioEnabled: false,
+          aspectRatioPickerButtonHidden: true,
+        ),
+      ],
+    );
+    if (cropped == null || !mounted) return;
+
     setState(() => _uploadingIds.add(child.id));
     try {
-      final avatarUrl = await _classroomRepo.uploadAvatar(child.id.toString(), picked.path);
+      final avatarUrl = await _classroomRepo.uploadAvatar(child.id.toString(), cropped.path);
       if (!mounted) return;
       setState(() {
         final i = _children.indexWhere((c) => c.id == child.id);
@@ -135,14 +147,18 @@ class _HijosEncontradosPageState extends State<HijosEncontradosPage> {
     context.go(AppRouter.home);
   }
 
-  String _initials(ChildModel c) {
-    final f = c.firstName.isNotEmpty ? c.firstName[0].toUpperCase() : '';
-    final l = c.lastName.isNotEmpty ? c.lastName[0].toUpperCase() : '';
-    return '$f$l';
+  String _subtitleParts(ChildModel c) {
+    final parts = [
+      if (c.section != null) c.section!,
+      if (c.age != null) '${c.age} años',
+    ];
+    return parts.join(' · ');
   }
 
   @override
   Widget build(BuildContext context) {
+    final isSingle = _children.length == 1;
+
     return Scaffold(
       backgroundColor: _kBg,
       body: SafeArea(
@@ -153,27 +169,45 @@ class _HijosEncontradosPageState extends State<HijosEncontradosPage> {
             children: [
               const SizedBox(height: 12),
               Text(
-                'Hola ${widget.user.firstName} 👋, encontramos a tus hijos',
+                isSingle
+                    ? 'Hola ${widget.user.firstName} 👋, encontramos a ${_children.first.firstName}'
+                    : 'Hola ${widget.user.firstName} 👋, encontramos a tus hijos',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _kTextDark),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Agrégales una foto para reconocerlos más fácil en la app',
-                style: TextStyle(fontSize: 12, color: _kTextGray),
+              Text(
+                isSingle
+                    ? 'Agrega una foto para reconocer a ${_children.first.firstName} más fácil en la app'
+                    : 'Agrégales una foto para reconocerlos más fácil en la app',
+                style: const TextStyle(fontSize: 12, color: _kTextGray),
               ),
               const SizedBox(height: 20),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: _children.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (_, i) => _ChildPhotoCard(
-                    child: _children[i],
-                    initials: _initials(_children[i]),
-                    uploading: _uploadingIds.contains(_children[i].id),
-                    onTap: () => _pickAndUpload(_children[i]),
+              // "04c" (un solo hijo): la tarjeta va pegada al subtítulo, NO
+              // centrada en la pantalla — por eso NO se envuelve en Expanded
+              // acá, a diferencia de la lista de "04b" que sí necesita
+              // Expanded para poder hacer scroll cuando hay varios hijos.
+              if (isSingle)
+                _ChildPhotoCard(
+                  child: _children.first,
+                  subtitle: _subtitleParts(_children.first),
+                  uploading: _uploadingIds.contains(_children.first.id),
+                  onTap: () => _pickAndUpload(_children.first),
+                  large: true,
+                )
+              else
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: _children.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (_, i) => _ChildPhotoCard(
+                      child: _children[i],
+                      subtitle: _subtitleParts(_children[i]),
+                      uploading: _uploadingIds.contains(_children[i].id),
+                      onTap: () => _pickAndUpload(_children[i]),
+                      large: false,
+                    ),
                   ),
                 ),
-              ),
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
@@ -186,13 +220,19 @@ class _HijosEncontradosPageState extends State<HijosEncontradosPage> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: _onContinue,
-                  child: const Text('continuar', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  child: const Text('Continuar', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                 ),
               ),
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Icon(Icons.info_outline, size: 17, color: Colors.grey[500]),
+                  Container(
+                    width: 17,
+                    height: 17,
+                    decoration: const BoxDecoration(color: _kInfoBadgeBg, shape: BoxShape.circle),
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.info_outline, size: 11, color: _kInfoBlue),
+                  ),
                   const SizedBox(width: 7),
                   Expanded(
                     child: Text(
@@ -213,33 +253,37 @@ class _HijosEncontradosPageState extends State<HijosEncontradosPage> {
 class _ChildPhotoCard extends StatelessWidget {
   const _ChildPhotoCard({
     required this.child,
-    required this.initials,
+    required this.subtitle,
     required this.uploading,
     required this.onTap,
+    required this.large,
   });
 
   final ChildModel child;
-  final String initials;
+  final String subtitle;
   final bool uploading;
   final VoidCallback onTap;
+  // true → tarjeta "04c" (un solo hijo, avatar 100px). false → tarjeta
+  // "04b" dentro de la lista (avatar 56px).
+  final bool large;
 
   @override
   Widget build(BuildContext context) {
-    final subtitleParts = [
-      if (child.section != null) child.section!,
-      if (child.age != null) '${child.age} años',
-    ];
+    final avatarSize = large ? 100.0 : 56.0;
+    final badgeSize = large ? 32.0 : 24.0;
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(vertical: large ? 24 : 14, horizontal: 14),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           GestureDetector(
             onTap: uploading ? null : onTap,
             child: SizedBox(
-              width: 56,
-              height: 56,
+              width: avatarSize,
+              height: avatarSize,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
@@ -247,12 +291,12 @@ class _ChildPhotoCard extends StatelessWidget {
                     child: child.avatarUrl != null
                         ? Image.network(
                             child.avatarUrl!,
-                            width: 56,
-                            height: 56,
+                            width: avatarSize,
+                            height: avatarSize,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => _initialsCircle(),
+                            errorBuilder: (_, __, ___) => _placeholderCircle(avatarSize),
                           )
-                        : _initialsCircle(),
+                        : _placeholderCircle(avatarSize),
                   ),
                   if (uploading)
                     Positioned.fill(
@@ -272,58 +316,53 @@ class _ChildPhotoCard extends StatelessWidget {
                     )
                   else
                     Positioned(
-                      right: -2,
+                      right: -4,
                       bottom: -2,
                       child: Container(
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
+                        width: badgeSize,
+                        height: badgeSize,
+                        decoration: const BoxDecoration(color: _kBadgeBg, shape: BoxShape.circle),
+                        child: Icon(
+                          Icons.add_a_photo_outlined,
+                          size: badgeSize * 0.5,
                           color: _kPrimary,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 1.5),
                         ),
-                        child: const Icon(Icons.photo_camera, size: 12, color: Colors.white),
                       ),
                     ),
                 ],
               ),
             ),
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  child.fullName,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _kTextDark),
-                ),
-                if (subtitleParts.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitleParts.join(' · '),
-                    style: const TextStyle(fontSize: 12, color: _kTextGray),
-                  ),
-                ],
-              ],
+          SizedBox(height: large ? 16 : 12),
+          Text(
+            child.fullName,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: large ? 18 : 15,
+              fontWeight: FontWeight.w600,
+              color: _kTextDark,
             ),
           ),
+          if (subtitle.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: _kTextGray),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _initialsCircle() {
+  Widget _placeholderCircle(double size) {
     return Container(
-      width: 56,
-      height: 56,
-      decoration: const BoxDecoration(color: _kPrimary, shape: BoxShape.circle),
+      width: size,
+      height: size,
+      decoration: const BoxDecoration(color: _kAvatarBg, shape: BoxShape.circle),
       alignment: Alignment.center,
-      child: Text(
-        initials,
-        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
-      ),
+      child: Icon(Icons.person_outline, size: size * 0.45, color: _kTextGray),
     );
   }
 }
