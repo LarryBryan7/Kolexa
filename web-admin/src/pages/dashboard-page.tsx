@@ -36,8 +36,11 @@ export function DashboardPage() {
   // KPIs alineados al diseño Figma (Pantalla 02 — Dashboard):
   // Total de aulas / Total de alumnos / Total de docentes / Total de padres.
   // Todos derivados de endpoints de listas reales (no se inventa /admin/dashboard).
-  const docentes = users.data?.filter((u) => u.userRoles?.[0]?.role?.name === 'teacher').length ?? 0;
-  const padres = users.data?.filter((u) => u.userRoles?.[0]?.role?.name === 'parent').length ?? 0;
+  // Un mismo User puede tener varios roles (ej. es padre y también
+  // docente) — se busca en TODOS sus roles, no solo el primero, si no
+  // los conteos subestiman a quienes tienen más de un rol.
+  const docentes = users.data?.filter((u) => u.userRoles?.some((r) => r.role.name === 'teacher')).length ?? 0;
+  const padres = users.data?.filter((u) => u.userRoles?.some((r) => r.role.name === 'parent')).length ?? 0;
 
   const kpis = [
     {
