@@ -170,7 +170,9 @@ class _PendientesPageState extends State<PendientesPage> {
                         ),
                         const SizedBox(width: 6),
                         _FiltroChipWidget(
-                          label: _chipLabel('Comunicados', 1),
+                          // Sin datos reales de comunicados todavía — sin
+                          // número hasta que se conecte a algo real.
+                          label: _chipLabel('Comunicados', 0),
                           width: 108,
                           active: _filtro == _FiltroChip.comunicados,
                           onTap: () =>
@@ -178,7 +180,9 @@ class _PendientesPageState extends State<PendientesPage> {
                         ),
                         const SizedBox(width: 6),
                         _FiltroChipWidget(
-                          label: _chipLabel('Reuniones', 2),
+                          // Sin datos reales de reuniones todavía — sin
+                          // número hasta que se conecte a algo real.
+                          label: _chipLabel('Reuniones', 0),
                           width: 89,
                           active: _filtro == _FiltroChip.reuniones,
                           onTap: () =>
