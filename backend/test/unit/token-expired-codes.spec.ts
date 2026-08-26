@@ -69,6 +69,10 @@ describe('ClassroomController — code GOOGLE_TOKEN_EXPIRED (los 3 endpoints)', 
       syncStudent: jest.fn().mockRejectedValue(rejectWith),
       getOverview: jest.fn().mockRejectedValue(rejectWith),
       assertStudentOwnedByParent: jest.fn().mockResolvedValue(undefined),
+      // getOverview ahora pasa por assertStudentReadAccess (agrega bypass
+      // de school_admin — ver plan de visibilidad del director), no por
+      // assertStudentOwnedByParent. sync sigue usando este último.
+      assertStudentReadAccess: jest.fn().mockResolvedValue(undefined),
     };
     return new ClassroomController(mockService);
   }

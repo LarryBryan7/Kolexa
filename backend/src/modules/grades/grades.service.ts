@@ -18,6 +18,8 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UserPayload } from '../../common/decorators/current-user.decorator';
+import { isSchoolAdminOf } from '../../common/utils/school-staff-access';
 
 @Injectable()
 export class GradesService {
@@ -139,13 +141,22 @@ export class GradesService {
 
   // ── getStudentReport ──────────────────────────────────────
   // Boleta completa de un alumno: todas sus notas por periodo y curso.
-  // Lo ve el padre de familia en la app.
-  async getStudentReport(studentId: number, parentId: bigint) {
-    // Verificar que el padre tiene acceso a este alumno
-    const rel = await this.prisma.userStudent.findFirst({
-      where: { userId: parentId, studentId },
+  // Lo ve el padre de familia, o el director (school_admin) del mismo
+  // colegio del alumno.
+  async getStudentReport(studentId: number, user: UserPayload) {
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: { schoolId: true },
     });
-    if (!rel) throw new ForbiddenException('No tienes acceso a las notas de este alumno');
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    if (!isSchoolAdminOf(user, student.schoolId)) {
+      // Verificar que el padre tiene acceso a este alumno
+      const rel = await this.prisma.userStudent.findFirst({
+        where: { userId: user.sub, studentId },
+      });
+      if (!rel) throw new ForbiddenException('No tienes acceso a las notas de este alumno');
+    }
 
     // Traer todas las notas del alumno con datos de curso y periodo
     const grades = await this.prisma.grade.findMany({

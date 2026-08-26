@@ -44,7 +44,7 @@ export class HomeworkController {
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @CurrentUser() user: UserPayload,
   ) {
-    return this.homeworkService.getClassroomHomework(classroomId, user.sub);
+    return this.homeworkService.getClassroomHomework(classroomId, user);
   }
 
   // GET /homework/student/:studentId
@@ -53,7 +53,7 @@ export class HomeworkController {
     @Param('studentId', ParseIntPipe) studentId: number,
     @CurrentUser() user: UserPayload,
   ) {
-    return this.homeworkService.getStudentHomework(studentId, user.sub);
+    return this.homeworkService.getStudentHomework(studentId, user);
   }
 
   // GET /homework/:id

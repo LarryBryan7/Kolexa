@@ -32,7 +32,7 @@ export class AnecdotesController {
     @Param('studentId', ParseIntPipe) studentId: number,
     @CurrentUser() user: UserPayload,
   ) {
-    return this.service.getForStudent(studentId, user.sub, user.roles.includes('teacher'));
+    return this.service.getForStudent(studentId, user, user.roles.includes('teacher'));
   }
 
   @Delete(':id')

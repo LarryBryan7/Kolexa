@@ -4,6 +4,7 @@
 // Rutas (prefijo global /api/v1):
 //   GET    /api/v1/admin/school
 //   PATCH  /api/v1/admin/school
+//   GET    /api/v1/admin/school/summary
 //   GET    /api/v1/admin/classrooms
 //   POST   /api/v1/admin/classrooms
 //   PATCH  /api/v1/admin/classrooms/:id
@@ -80,6 +81,14 @@ export class AdminController {
   @Patch('school')
   updateSchool(@CurrentUser() user: UserPayload, @Body() dto: UpdateSchoolDto) {
     return this.service.updateSchool(user.schoolId!, dto);
+  }
+
+  // Números reales para el home del director en la app móvil (antes
+  // hardcodeados en el cliente) — aulas, alumnos, docentes, asistencia de
+  // hoy, pagos vencidos, docentes conectados a Classroom, último anuncio.
+  @Get('school/summary')
+  getSchoolSummary(@CurrentUser() user: UserPayload) {
+    return this.service.getSchoolSummary(user.schoolId!);
   }
 
   // ── Aulas ────────────────────────────────────────────────

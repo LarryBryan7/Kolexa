@@ -167,7 +167,7 @@ export class ClassroomController {
     @Query('studentId', ParseBigIntPipe) studentId: bigint,
     @CurrentUser() user: UserPayload,
   ) {
-    await this.classroomService.assertStudentOwnedByParent(user.sub, studentId);
+    await this.classroomService.assertStudentReadAccess(user, studentId);
     return this.classroomService.getParentTodaySummary(studentId);
   }
 
@@ -179,7 +179,7 @@ export class ClassroomController {
   @UseGuards(JwtAuthGuard)
   @Get('parent/home')
   async getParentHome(@Query('studentId', ParseBigIntPipe) studentId: bigint, @CurrentUser() user: UserPayload) {
-    await this.classroomService.assertStudentOwnedByParent(user.sub, studentId);
+    await this.classroomService.assertStudentReadAccess(user, studentId);
     return this.classroomService.getParentHome(studentId);
   }
 
@@ -219,19 +219,24 @@ export class ClassroomController {
   @UseGuards(JwtAuthGuard)
   @Get('student/:studentId/status')
   async getStatus(@Param('studentId', ParseBigIntPipe) studentId: bigint, @CurrentUser() user: UserPayload) {
-    await this.classroomService.assertStudentOwnedByParent(user.sub, studentId);
+    await this.classroomService.assertStudentReadAccess(user, studentId);
     const connected = await this.classroomService.isConnected(studentId);
     return { connected };
   }
 
   // ── POST /classroom/student/:studentId/sync ───────────────
-  // Sincroniza datos desde Google Classroom hacia la BD de Kolexa
+  // Sincroniza datos desde Google Classroom hacia la BD de Kolexa.
+  // ?force=true salta la caché de 15 min (lo usa el pull-to-refresh manual).
   @UseGuards(JwtAuthGuard)
   @Post('student/:studentId/sync')
-  async sync(@Param('studentId', ParseBigIntPipe) studentId: bigint, @CurrentUser() user: UserPayload) {
+  async sync(
+    @Param('studentId', ParseBigIntPipe) studentId: bigint,
+    @CurrentUser() user: UserPayload,
+    @Query('force') force?: string,
+  ) {
     await this.classroomService.assertStudentOwnedByParent(user.sub, studentId);
     try {
-      return await this.classroomService.syncStudent(studentId);
+      return await this.classroomService.syncStudent(studentId, force === 'true');
     } catch (e: any) {
       const msg: string = e?.response?.data?.error ?? e?.message ?? '';
       if (msg.includes('invalid_grant') || msg.includes('invalid_token')) {
@@ -245,7 +250,7 @@ export class ClassroomController {
   @UseGuards(JwtAuthGuard)
   @Get('student/:studentId/courses')
   async getCourses(@Param('studentId', ParseBigIntPipe) studentId: bigint, @CurrentUser() user: UserPayload) {
-    await this.classroomService.assertStudentOwnedByParent(user.sub, studentId);
+    await this.classroomService.assertStudentReadAccess(user, studentId);
     return this.classroomService.getCourses(studentId);
   }
 
@@ -254,7 +259,7 @@ export class ClassroomController {
   @UseGuards(JwtAuthGuard)
   @Get('student/:studentId/upcoming')
   async getUpcoming(@Param('studentId', ParseBigIntPipe) studentId: bigint, @CurrentUser() user: UserPayload) {
-    await this.classroomService.assertStudentOwnedByParent(user.sub, studentId);
+    await this.classroomService.assertStudentReadAccess(user, studentId);
     return this.classroomService.getUpcomingCoursework(studentId);
   }
 
@@ -264,7 +269,7 @@ export class ClassroomController {
   @UseGuards(JwtAuthGuard)
   @Get('student/:studentId/overview')
   async getOverview(@Param('studentId', ParseBigIntPipe) studentId: bigint, @CurrentUser() user: UserPayload) {
-    await this.classroomService.assertStudentOwnedByParent(user.sub, studentId);
+    await this.classroomService.assertStudentReadAccess(user, studentId);
     try {
       return await this.classroomService.getOverview(studentId);
     } catch (e: any) {
@@ -282,7 +287,7 @@ export class ClassroomController {
   @UseGuards(JwtAuthGuard)
   @Get('student/:studentId/upcoming-status')
   async getUpcomingStatus(@Param('studentId', ParseBigIntPipe) studentId: bigint, @CurrentUser() user: UserPayload) {
-    await this.classroomService.assertStudentOwnedByParent(user.sub, studentId);
+    await this.classroomService.assertStudentReadAccess(user, studentId);
     return this.classroomService.getUpcomingStatus(studentId);
   }
 }

@@ -15,6 +15,7 @@ import '../../classroom/data/models/gc_models.dart';
 import '../../classroom/data/repository/classroom_repository.dart';
 import 'novedades_detail_page.dart';
 import 'esta_semana_page.dart';
+import 'pendientes_page.dart';
 import 'home_docente_page.dart' show PerfilTab;
 
 // ── Paleta extraída de Figma ──────────────────────────────
@@ -215,7 +216,11 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     });
   }
 
-  Future<void> _onRefresh({bool showErrors = false}) async {
+  // force: true SOLO para el pull-to-refresh manual (el usuario deslizó
+  // pidiendo datos frescos) — salta la caché de 15 min del sync con Google.
+  // La carga automática (initState, resume de la app) deja force=false para
+  // no pagar el sync completo (~26-30s) en cada apertura normal.
+  Future<void> _onRefresh({bool showErrors = false, bool force = false}) async {
     // Mejora D: guarda de reentrada. Si ya hay un refresh en vuelo (pull-to-
     // refresh + resume por FCM + post-frame inicial), se ignora la llamada.
     if (_refreshing) return;
@@ -243,7 +248,7 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
         // Classroom (según el backend). Si no lo está, se omite.
         if (connected) {
           try {
-            final result = await repo.sync(studentId);
+            final result = await repo.sync(studentId, force: force);
             // Mejora C: si el sync fue cache hit (no trajo datos nuevos de
             // Google), la primera carga de /parent/home ya es suficiente y
             // evitamos el segundo /parent/home redundante. Solo recargamos
@@ -503,7 +508,7 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
                   ? const PerfilTab()
                   : RefreshIndicator(
                 color: _kPrimary,
-                onRefresh: _onRefresh,
+                onRefresh: () => _onRefresh(force: true),
                 child: Align(
                   alignment: Alignment.topCenter,
                   child: ConstrainedBox(
@@ -1828,47 +1833,53 @@ class _UrgentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFBF0DD),
-        borderRadius: BorderRadius.circular(20),
+    return GestureDetector(
+      onTap: () => Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(builder: (_) => const PendientesPage()),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: const BoxDecoration(
-              color: Color(0xFFF6E0AB),
-              shape: BoxShape.circle,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFBF0DD),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: const BoxDecoration(
+                color: Color(0xFFF6E0AB),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.warning_amber_rounded,
+                  color: Color(0xFF693902), size: 18),
             ),
-            child: const Icon(Icons.warning_amber_rounded,
-                color: Color(0xFF693902), size: 18),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Urgente para hoy',
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF693902))),
-                SizedBox(height: 1),
-                Text('1 autorización · 1 pago',
-                    style: TextStyle(fontSize: 13, color: Color(0xFF693902))),
-              ],
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Urgente para hoy',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF693902))),
+                  SizedBox(height: 1),
+                  Text('1 autorización · 1 pago',
+                      style:
+                          TextStyle(fontSize: 13, color: Color(0xFF693902))),
+                ],
+              ),
             ),
-          ),
-          const Text('›',
-              style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: _kChevron)),
-        ],
+            const Text('›',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: _kChevron)),
+          ],
+        ),
       ),
     );
   }

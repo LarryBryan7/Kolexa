@@ -55,6 +55,6 @@ export class PickupController {
     @Param('studentId', ParseIntPipe) studentId: number,
     @CurrentUser() user: UserPayload,
   ) {
-    return this.service.getPickupHistory(studentId, user.sub);
+    return this.service.getPickupHistory(studentId, user);
   }
 }

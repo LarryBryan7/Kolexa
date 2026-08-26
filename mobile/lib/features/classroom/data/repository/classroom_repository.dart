@@ -16,8 +16,13 @@ class ClassroomRepository {
     return res.data['connected'] as bool;
   }
 
-  Future<SyncResult> sync(String studentId) async {
-    final res = await _api.post('classroom/student/$studentId/sync');
+  // force=true salta la caché de 15 min del backend y sincroniza con Google
+  // sí o sí — lo usa el pull-to-refresh manual (acción explícita del
+  // usuario). La carga automática al abrir la app deja force=false para no
+  // pagar los ~26-30s del sync completo en cada apertura.
+  Future<SyncResult> sync(String studentId, {bool force = false}) async {
+    final path = 'classroom/student/$studentId/sync${force ? '?force=true' : ''}';
+    final res = await _api.post(path);
     return SyncResult.fromJson(res.data as Map<String, dynamic>);
   }
 
