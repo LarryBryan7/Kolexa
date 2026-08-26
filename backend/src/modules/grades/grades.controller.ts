@@ -48,7 +48,7 @@ export class GradesController {
     @Param('studentId', ParseIntPipe) studentId: number,
     @CurrentUser() user: UserPayload,
   ) {
-    return this.service.getStudentReport(studentId, user.sub);
+    return this.service.getStudentReport(studentId, user);
   }
 
   // GET /grades/classroom/:classroomId/period/:periodId

@@ -88,7 +88,7 @@ export class AttendanceController {
   ) {
     return this.attendanceService.getStudentHistory(
       studentId,
-      user.sub,
+      user,
       limit ? parseInt(limit, 10) : 30,
       offset ? parseInt(offset, 10) : 0,
     );

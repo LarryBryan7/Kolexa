@@ -41,6 +41,11 @@
 						<string>flutter</string>
 						<key>UISceneDelegateClassName</key>
 						<string>FlutterSceneDelegate</string>
+						<!-- Sin esta clave la escena no instancia Main.storyboard, así que
+						     nunca se crea el FlutterViewController: el motor de Flutter no
+						     arranca, main() no se ejecuta y la app queda en negro. -->
+						<key>UISceneStoryboardFile</key>
+						<string>Main</string>
 					</dict>
 				</array>
 			</dict>
@@ -81,7 +86,7 @@
 				<string>Editor</string>
 				<key>CFBundleURLSchemes</key>
 				<array>
-					<string>com.googleusercontent.apps.TU_CLIENT_ID</string>
+					<string>com.googleusercontent.apps.171691080214-cj1osmcu6t4csu49onfbuetq40p3j6m6</string>
 				</array>
 			</dict>
 		</array>

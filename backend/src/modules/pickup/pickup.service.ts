@@ -16,6 +16,8 @@
 
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UserPayload } from '../../common/decorators/current-user.decorator';
+import { isSchoolAdminOf } from '../../common/utils/school-staff-access';
 
 @Injectable()
 export class PickupService {
@@ -164,12 +166,21 @@ export class PickupService {
   }
 
   // ── getPickupHistory ──────────────────────────────────────
-  // Historial de recojos de un alumno (lo ve el padre).
-  async getPickupHistory(studentId: number, parentId: bigint, limit = 30) {
-    const rel = await this.prisma.userStudent.findFirst({
-      where: { userId: parentId, studentId },
+  // Historial de recojos de un alumno. Lo ve el padre, o el director
+  // (school_admin) del mismo colegio del alumno.
+  async getPickupHistory(studentId: number, user: UserPayload, limit = 30) {
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: { schoolId: true },
     });
-    if (!rel) throw new ForbiddenException('No tienes acceso al historial de este alumno');
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    if (!isSchoolAdminOf(user, student.schoolId)) {
+      const rel = await this.prisma.userStudent.findFirst({
+        where: { userId: user.sub, studentId },
+      });
+      if (!rel) throw new ForbiddenException('No tienes acceso al historial de este alumno');
+    }
 
     return this.prisma.pickupEvent.findMany({
       where: { studentId },

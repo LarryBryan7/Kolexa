@@ -79,6 +79,89 @@ export class AdminService {
     });
   }
 
+  // Números reales para el home del director en la app móvil (antes
+  // hardcodeados en el cliente) — aulas, alumnos, docentes, asistencia de
+  // hoy, pagos vencidos, docentes conectados a Classroom, último anuncio.
+  async getSchoolSummary(schoolId: bigint) {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    const [
+      classroomCount,
+      studentCount,
+      teacherCount,
+      todayAttendances,
+      overdueAgg,
+      teachersConnectedToClassroom,
+      latestAnnouncement,
+    ] = await Promise.all([
+      this.prisma.classroom.count({
+        where: { schoolLocation: { schoolId }, isActive: true },
+      }),
+      this.prisma.student.count({ where: { schoolId, isActive: true } }),
+      this.prisma.userRole.count({
+        where: { schoolId, role: { name: 'teacher' } },
+      }),
+      this.prisma.attendance.findMany({
+        where: { date: today, classroom: { schoolLocation: { schoolId } } },
+        select: { classroomId: true, records: { select: { status: true } } },
+      }),
+      // 'overdue' está definido en el status pero nunca se asigna en la
+      // práctica — el vencimiento real se calcula por dueDate < hoy.
+      this.prisma.paymentObligation.aggregate({
+        where: {
+          student: { schoolId },
+          dueDate: { lt: today },
+          status: { notIn: ['paid', 'waived'] },
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.teacherGoogleToken.count({
+        where: {
+          user: {
+            userRoles: { some: { schoolId, role: { name: 'teacher' } } },
+          },
+        },
+      }),
+      this.prisma.announcement.findFirst({
+        where: { schoolId },
+        orderBy: { createdAt: 'desc' },
+        select: { title: true, createdAt: true },
+      }),
+    ]);
+
+    const classroomsWithAttendanceToday = new Set(
+      todayAttendances.map((a) => a.classroomId.toString()),
+    ).size;
+    const allRecords = todayAttendances.flatMap((a) => a.records);
+    const presentRecords = allRecords.filter(
+      (r) => r.status !== 'absent',
+    ).length;
+    const attendanceTodayPercent =
+      allRecords.length > 0
+        ? Math.round((presentRecords / allRecords.length) * 100)
+        : null;
+
+    return {
+      classroomCount,
+      studentCount,
+      teacherCount,
+      attendanceTodayPercent,
+      classroomsWithoutAttendanceToday:
+        classroomCount - classroomsWithAttendanceToday,
+      overduePaymentsTotal: overdueAgg._sum.amount
+        ? Number(overdueAgg._sum.amount)
+        : 0,
+      teachersConnectedToClassroom,
+      latestAnnouncement: latestAnnouncement
+        ? {
+            title: latestAnnouncement.title,
+            createdAt: latestAnnouncement.createdAt,
+          }
+        : null,
+    };
+  }
+
   // ─────────────────────────────────────────────────────────
   // AULAS (pertenecen al colegio vía SchoolLocation.schoolId)
   // ─────────────────────────────────────────────────────────

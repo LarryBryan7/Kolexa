@@ -45,6 +45,12 @@ describe('Autorización cross-tenant — BL-1/2/3/4/5/7 (Postgres real)', () => 
   let schoolA: bigint, schoolB: bigint;
   let userParentA: bigint, userParentB: bigint;
   let userTeacherA: bigint, userTeacherB: bigint, userTeacherA2: bigint;
+  // Payloads UserPayload — usados por los métodos que ahora aceptan el
+  // usuario completo (para el bypass de lectura de school_admin, ver plan
+  // de visibilidad del director). Ninguno de estos 4 es school_admin, así
+  // que el bypass nunca aplica acá — el comportamiento observado es
+  // idéntico al de antes de agregar `schoolId`/`roles` a la firma.
+  let payloadParentA: any, payloadTeacherA: any, payloadTeacherA2: any, payloadTeacherB: any;
   let studentA: bigint, studentB: bigint;
   let classroomA: bigint, courseA: bigint, periodA: number;
   let obligationA: bigint;
@@ -98,6 +104,11 @@ describe('Autorización cross-tenant — BL-1/2/3/4/5/7 (Postgres real)', () => 
       prisma.userRole.create({ data: { userId: userTeacherB, roleId: TEACHER_ROLE_ID, schoolId: schoolB } }),
       prisma.userRole.create({ data: { userId: userTeacherA2, roleId: TEACHER_ROLE_ID, schoolId: schoolA } }),
     ]);
+
+    payloadParentA = { sub: userParentA, email: uParentA.email, roles: ['parent'], schoolId: schoolA };
+    payloadTeacherA = { sub: userTeacherA, email: uTeacherA.email, roles: ['teacher'], schoolId: schoolA };
+    payloadTeacherA2 = { sub: userTeacherA2, email: uTeacherA2.email, roles: ['teacher'], schoolId: schoolA };
+    payloadTeacherB = { sub: userTeacherB, email: uTeacherB.email, roles: ['teacher'], schoolId: schoolB };
 
     const [stA, stB] = await Promise.all([
       prisma.student.create({ data: { schoolId: schoolA, firstName: 'Hijo', lastName: 'A', code: `IDOR-A-${Date.now().toString(36)}` } }),
@@ -205,13 +216,13 @@ describe('Autorización cross-tenant — BL-1/2/3/4/5/7 (Postgres real)', () => 
       const anecdote = await prisma.anecdote.create({
         data: { authorId: userTeacherA, studentId: studentA, title: 'T', description: 'D', isPrivate: false },
       });
-      const result = await anecdotesService.getForStudent(Number(studentA), userParentA, false);
+      const result = await anecdotesService.getForStudent(Number(studentA), payloadParentA, false);
       expect(result.map((a) => a.id)).toContain(anecdote.id);
     });
 
     it('Parent A NO ve anécdotas de Student B (aunque intente pasar isTeacher=true, ya no viene de query)', async () => {
       await expect(
-        anecdotesService.getForStudent(Number(studentB), userParentA, false),
+        anecdotesService.getForStudent(Number(studentB), payloadParentA, false),
       ).rejects.toMatchObject({ status: 403 });
     });
 
@@ -219,19 +230,19 @@ describe('Autorización cross-tenant — BL-1/2/3/4/5/7 (Postgres real)', () => 
       const priv = await prisma.anecdote.create({
         data: { authorId: userTeacherA, studentId: studentA, title: 'Privada', description: 'D', isPrivate: true },
       });
-      const result = await anecdotesService.getForStudent(Number(studentA), userTeacherA, true);
+      const result = await anecdotesService.getForStudent(Number(studentA), payloadTeacherA, true);
       expect(result.map((a) => a.id)).toContain(priv.id);
     });
 
     it('Teacher A2 (MISMO colegio, pero NO dicta el aula/curso de Student A) NO ve sus anécdotas — "mismo colegio" ya no basta', async () => {
       await expect(
-        anecdotesService.getForStudent(Number(studentA), userTeacherA2, true),
+        anecdotesService.getForStudent(Number(studentA), payloadTeacherA2, true),
       ).rejects.toMatchObject({ status: 403 });
     });
 
     it('Teacher B (OTRO colegio) NO ve anécdotas de Student A aunque isTeacher=true (cierre del cross-school leak)', async () => {
       await expect(
-        anecdotesService.getForStudent(Number(studentA), userTeacherB, true),
+        anecdotesService.getForStudent(Number(studentA), payloadTeacherB, true),
       ).rejects.toMatchObject({ status: 403 });
     });
 
@@ -239,7 +250,7 @@ describe('Autorización cross-tenant — BL-1/2/3/4/5/7 (Postgres real)', () => 
       // Simula exactamente el intento de bypass: aunque el flag isTeacher
       // llegara en true por error, el ownership real sigue exigido.
       await expect(
-        anecdotesService.getForStudent(Number(studentB), userParentA, true),
+        anecdotesService.getForStudent(Number(studentB), payloadParentA, true),
       ).rejects.toMatchObject({ status: 403 });
     });
 

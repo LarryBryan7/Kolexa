@@ -23,6 +23,8 @@ import {
   UpdateHomeworkDto,
   UpdateStudentHomeworkDto,
 } from './dto/homework.dto';
+import { UserPayload } from '../../common/decorators/current-user.decorator';
+import { isSchoolAdminOf } from '../../common/utils/school-staff-access';
 
 @Injectable()
 export class HomeworkService {
@@ -117,13 +119,27 @@ export class HomeworkService {
   }
 
   // ── getClassroomHomework ──────────────────────────────────
-  // Lista de tareas de un aula (el profesor ve sus tareas asignadas).
+  // Lista de tareas de un aula. El profesor ve solo las suyas; el director
+  // (school_admin) del mismo colegio del aula ve TODAS las del aula, sin
+  // filtrar por profesor — antes esto devolvía lista vacía para el
+  // director en vez de mostrarle las tareas reales.
   // Ordenadas por fecha de entrega (más próxima primero).
-  async getClassroomHomework(classroomId: number, teacherId: bigint) {
+  async getClassroomHomework(classroomId: number, user: UserPayload) {
+    let isAdmin = false;
+    if (user.roles.includes('school_admin')) {
+      // Classroom no tiene schoolId directo — pasa por SchoolLocation
+      // (el campus físico del aula).
+      const classroom = await this.prisma.classroom.findUnique({
+        where: { id: classroomId },
+        select: { schoolLocation: { select: { schoolId: true } } },
+      });
+      isAdmin = !!classroom && isSchoolAdminOf(user, classroom.schoolLocation.schoolId);
+    }
+
     return this.prisma.homework.findMany({
       where: {
         classroomId,
-        teacherId,
+        ...(isAdmin ? {} : { teacherId: user.sub }),
         deletedAt: null,
       },
       include: {
@@ -136,15 +152,24 @@ export class HomeworkService {
   }
 
   // ── getStudentHomework ────────────────────────────────────
-  // Tareas de un alumno específico (lo ve el padre de familia).
+  // Tareas de un alumno específico. Lo ve el padre de familia, o el
+  // director (school_admin) del mismo colegio del alumno.
   // Muestra todas las tareas pendientes y recientes.
-  async getStudentHomework(studentId: number, parentId: bigint) {
-    // Verificar que el padre tiene acceso a este alumno
-    const relationship = await this.prisma.userStudent.findFirst({
-      where: { userId: parentId, studentId },
+  async getStudentHomework(studentId: number, user: UserPayload) {
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: { schoolId: true },
     });
-    if (!relationship) {
-      throw new ForbiddenException('No tienes acceso a las tareas de este alumno');
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    if (!isSchoolAdminOf(user, student.schoolId)) {
+      // Verificar que el padre tiene acceso a este alumno
+      const relationship = await this.prisma.userStudent.findFirst({
+        where: { userId: user.sub, studentId },
+      });
+      if (!relationship) {
+        throw new ForbiddenException('No tienes acceso a las tareas de este alumno');
+      }
     }
 
     return this.prisma.studentHomework.findMany({

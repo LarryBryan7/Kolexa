@@ -38,10 +38,17 @@ class GoogleSignInService {
   static const String _serverClientId =
       '171691080214-1t7108i5q0997upk7l6n7tq2ssr3a7r3.apps.googleusercontent.com';
 
+  // Client ID de tipo iOS (Google Cloud Console → Credenciales → "Kolexa
+  // iOS"). Solo lo usa el plugin en iOS/Web — en Android se ignora, ahí
+  // el client ID sale de google-services.json.
+  static const String _iosClientId =
+      '171691080214-cj1osmcu6t4csu49onfbuetq40p3j6m6.apps.googleusercontent.com';
+
   // Instancia de GoogleSignIn configurada con el server client ID.
   // 'webClientId' es el ID del cliente web/servidor; es el que permite
   // obtener un ID Token válido para que el backend lo verifique.
   final GoogleSignIn _googleSignIn = GoogleSignIn(
+    clientId: _iosClientId,
     serverClientId: _serverClientId,
   );
 

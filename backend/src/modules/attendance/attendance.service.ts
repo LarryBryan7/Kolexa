@@ -27,6 +27,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAttendanceDto } from './dto/create-attendance.dto';
 import { UpdateAttendanceRecordsDto } from './dto/update-records.dto';
+import { UserPayload } from '../../common/decorators/current-user.decorator';
+import { isSchoolAdminOf } from '../../common/utils/school-staff-access';
 
 @Injectable() // @Injectable permite que NestJS inyecte este servicio en el Controller
 export class AttendanceService {
@@ -269,21 +271,30 @@ export class AttendanceService {
   //
   // Parámetros:
   //   studentId → ID del alumno
-  //   userId    → ID del padre (para verificar que es su hijo)
+  //   user      → padre/tutor (se verifica que sea su hijo) o director del
+  //               mismo colegio del alumno (ve el de cualquier alumno)
   //   limit     → máximo de registros a retornar (paginación)
   //   offset    → cuántos saltar (para la siguiente página)
   async getStudentHistory(
     studentId: number,
-    userId: bigint,
+    user: UserPayload,
     limit = 30,
     offset = 0,
   ) {
-    // Verificar que el usuario es padre/tutor de este alumno
-    const relationship = await this.prisma.userStudent.findFirst({
-      where: { userId, studentId },
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: { schoolId: true },
     });
-    if (!relationship) {
-      throw new ForbiddenException('No tienes acceso al historial de este alumno');
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    if (!isSchoolAdminOf(user, student.schoolId)) {
+      // Verificar que el usuario es padre/tutor de este alumno
+      const relationship = await this.prisma.userStudent.findFirst({
+        where: { userId: user.sub, studentId },
+      });
+      if (!relationship) {
+        throw new ForbiddenException('No tienes acceso al historial de este alumno');
+      }
     }
 
     // Obtener el historial ordenado por fecha descendente (más reciente primero)

@@ -3,8 +3,15 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
+import '../../../core/api/api_client.dart';
 import '../../../core/widgets/notification_banner.dart';
+import '../../announcements/bloc/announcements_bloc.dart';
+import '../../announcements/ui/announcements_page.dart';
 import 'home_docente_page.dart' show PerfilTab;
+import '../data/director_repository.dart';
+import 'director/salones_page.dart';
+import 'director/personal_page.dart';
+import 'director/pensiones_page.dart';
 
 // ── Paleta ─────────────────────────────────────────────────
 const _kBg        = Color(0xFFF7F6F3);
@@ -15,10 +22,6 @@ const _kGray      = Color(0xFF666666);
 const _kGrayLt    = Color(0xFF999999);
 const _kNavInact  = Color(0xFF707070);
 const _kChevron   = Color(0xFF8E8E93);
-
-const _kRedBg     = Color(0xFFFAE6E5);
-const _kRedCircle = Color(0xFFF6D0CE);
-const _kRedText   = Color(0xFFBA3428);
 
 const _kYellowBg     = Color(0xFFFAEED3);
 const _kYellowCircle = Color(0xFFF6E0AB);
@@ -34,6 +37,19 @@ class HomeDirectorPage extends StatefulWidget {
 
 class _HomeDirectorPageState extends State<HomeDirectorPage> {
   int _navIndex = 0;
+  late Future<SchoolSummary> _summaryFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _summaryFuture = DirectorRepository(context.read<ApiClient>()).getSchoolSummary();
+  }
+
+  Future<void> _onRefresh() async {
+    final future = DirectorRepository(context.read<ApiClient>()).getSchoolSummary();
+    setState(() => _summaryFuture = future);
+    await future;
+  }
 
   String _greeting(String name) {
     final h = DateTime.now().hour;
@@ -64,75 +80,93 @@ class _HomeDirectorPageState extends State<HomeDirectorPage> {
             Expanded(
               child: _navIndex == 2
                   ? const PerfilTab()
-                  : SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // ── Banner: notificaciones desactivadas ──
-                          const NotificationBanner(),
-                          const SizedBox(height: 12),
+                  : RefreshIndicator(
+                      color: _kPrimary,
+                      onRefresh: _onRefresh,
+                      child: FutureBuilder<SchoolSummary>(
+                        future: _summaryFuture,
+                        builder: (context, snapshot) {
+                          final summary = snapshot.data;
+                          return SingleChildScrollView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // ── Banner: notificaciones desactivadas ──
+                                const NotificationBanner(),
+                                const SizedBox(height: 12),
 
-                          // ── Saludo ─────────────────────────────
-                          Text(
-                            _greeting(firstName),
-                            style: const TextStyle(
-                              fontSize: 19,
-                              fontWeight: FontWeight.w700,
-                              color: _kDark,
+                                // ── Saludo ─────────────────────────────
+                                Text(
+                                  _greeting(firstName),
+                                  style: const TextStyle(
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w700,
+                                    color: _kDark,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '$schoolName · ${_todayLabel()}',
+                                  style: const TextStyle(fontSize: 12, color: _kGray),
+                                ),
+                                const SizedBox(height: 20),
+
+                                // ── Card: colegio ──────────────────────
+                                _ColegioCard(schoolName: schoolName, summary: summary),
+                                const SizedBox(height: 12),
+
+                                // ── Alertas (solo si hay algo real que alertar) ──
+                                if (summary != null &&
+                                    (summary.classroomsWithoutAttendanceToday > 0 ||
+                                        summary.overduePaymentsTotal > 0)) ...[
+                                  _AlertCard(
+                                    bgColor: _kYellowBg,
+                                    circleColor: _kYellowCircle,
+                                    textColor: _kYellowText,
+                                    icon: Icons.notifications_outlined,
+                                    title: 'necesita tu atención',
+                                    subtitle: [
+                                      if (summary.classroomsWithoutAttendanceToday > 0)
+                                        '${summary.classroomsWithoutAttendanceToday} salones sin asistencia',
+                                      if (summary.overduePaymentsTotal > 0)
+                                        'S/ ${summary.overduePaymentsTotal.toStringAsFixed(2)} en pensiones vencidas',
+                                    ].join(' · '),
+                                    onTap: () => Navigator.of(context, rootNavigator: true).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => PensionesPage(
+                                          overdueTotal: summary.overduePaymentsTotal,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+
+                                // ── Resumen del colegio ────────────────
+                                _ResumenCard(summary: summary),
+                                const SizedBox(height: 12),
+
+                                // ── Comunicados ────────────────────────
+                                _ComunicadosCard(summary: summary),
+                                const SizedBox(height: 20),
+
+                                // ── Accesos rápidos ────────────────────
+                                const Text(
+                                  'Accesos Rápidos',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: _kGray,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                _AccesosRapidos(summary: summary),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '$schoolName · ${_todayLabel()}',
-                            style: const TextStyle(fontSize: 12, color: _kGray),
-                          ),
-                          const SizedBox(height: 20),
-
-                          // ── Card: colegio ──────────────────────
-                          _ColegioCard(schoolName: schoolName),
-                          const SizedBox(height: 12),
-
-                          // ── Alertas ────────────────────────────
-                          _AlertCard(
-                            bgColor: _kRedBg,
-                            circleColor: _kRedCircle,
-                            textColor: _kRedText,
-                            icon: Icons.warning_amber_rounded,
-                            title: 'incidente reportado',
-                            subtitle: '3ro A · requiere tu revisión',
-                          ),
-                          const SizedBox(height: 8),
-                          _AlertCard(
-                            bgColor: _kYellowBg,
-                            circleColor: _kYellowCircle,
-                            textColor: _kYellowText,
-                            icon: Icons.notifications_outlined,
-                            title: 'necesita tu atención',
-                            subtitle: '3 salones sin asistencia · S/ 12,400 en pensiones vencidas',
-                          ),
-                          const SizedBox(height: 12),
-
-                          // ── Resumen del colegio ────────────────
-                          _ResumenCard(),
-                          const SizedBox(height: 12),
-
-                          // ── Comunicados ────────────────────────
-                          _ComunicadosCard(),
-                          const SizedBox(height: 20),
-
-                          // ── Accesos rápidos ────────────────────
-                          const Text(
-                            'Accesos Rápidos',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: _kGray,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          const _AccesosRapidos(),
-                        ],
+                          );
+                        },
                       ),
                     ),
             ),
@@ -150,34 +184,42 @@ class _HomeDirectorPageState extends State<HomeDirectorPage> {
 // ── Card: colegio ──────────────────────────────────────────
 class _ColegioCard extends StatelessWidget {
   final String schoolName;
-  const _ColegioCard({required this.schoolName});
+  final SchoolSummary? summary;
+  const _ColegioCard({required this.schoolName, required this.summary});
 
   @override
   Widget build(BuildContext context) {
-    return _BaseCard(
-      child: Row(
-        children: [
-          _IconCircle(
-            size: 44,
-            bg: _kPrimaryLt,
-            child: const Icon(Icons.school_outlined, color: _kPrimary, size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(schoolName,
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600, color: _kDark)),
-                const SizedBox(height: 2),
-                const Text('12 salones · 340 alumnos',
-                    style: TextStyle(fontSize: 12, color: _kGray)),
-              ],
+    final subtitle = summary != null
+        ? '${summary!.classroomCount} salones · ${summary!.studentCount} alumnos'
+        : '—';
+    return GestureDetector(
+      onTap: () => Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(builder: (_) => const SalonesPage()),
+      ),
+      child: _BaseCard(
+        child: Row(
+          children: [
+            _IconCircle(
+              size: 44,
+              bg: _kPrimaryLt,
+              child: const Icon(Icons.school_outlined, color: _kPrimary, size: 22),
             ),
-          ),
-          const _Chevron(),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(schoolName,
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w600, color: _kDark)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: const TextStyle(fontSize: 12, color: _kGray)),
+                ],
+              ),
+            ),
+            const _Chevron(),
+          ],
+        ),
       ),
     );
   }
@@ -191,6 +233,7 @@ class _AlertCard extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
+  final VoidCallback? onTap;
 
   const _AlertCard({
     required this.bgColor,
@@ -199,12 +242,13 @@ class _AlertCard extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () {},
+      onTap: onTap ?? () {},
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -245,46 +289,55 @@ class _AlertCard extends StatelessWidget {
 
 // ── Resumen del colegio ────────────────────────────────────
 class _ResumenCard extends StatelessWidget {
-  const _ResumenCard();
+  final SchoolSummary? summary;
+  const _ResumenCard({required this.summary});
 
   @override
   Widget build(BuildContext context) {
-    return _BaseCard(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: const [
-              Expanded(
-                child: Text('resumen del colegio',
-                    style: TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600, color: _kDark)),
-              ),
-              _Chevron(),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _StatItem(
-                icon: Icons.calendar_month_outlined,
-                label: 'horarios',
-                value: '12 de 12',
-              ),
-              _StatItem(
-                icon: Icons.people_outline,
-                label: 'asistencia hoy',
-                value: '94%',
-              ),
-              _StatItem(
-                icon: Icons.person_outline,
-                label: 'profesoras',
-                value: '10 de 12',
-              ),
-            ],
-          ),
-        ],
+    final s = summary;
+    final classroomsWithAttendance =
+        s != null ? s.classroomCount - s.classroomsWithoutAttendanceToday : null;
+    return GestureDetector(
+      onTap: () => Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(builder: (_) => const SalonesPage()),
+      ),
+      child: _BaseCard(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Expanded(
+                  child: Text('resumen del colegio',
+                      style: TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w600, color: _kDark)),
+                ),
+                _Chevron(),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                _StatItem(
+                  icon: Icons.calendar_month_outlined,
+                  label: 'aulas con asistencia',
+                  value: s != null ? '$classroomsWithAttendance de ${s.classroomCount}' : '—',
+                ),
+                _StatItem(
+                  icon: Icons.people_outline,
+                  label: 'asistencia hoy',
+                  value: s?.attendanceTodayPercent != null ? '${s!.attendanceTodayPercent}%' : '—',
+                ),
+                _StatItem(
+                  icon: Icons.person_outline,
+                  label: 'docentes en Classroom',
+                  value: s != null ? '${s.teachersConnectedToClassroom} de ${s.teacherCount}' : '—',
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -328,34 +381,54 @@ class _StatItem extends StatelessWidget {
 
 // ── Comunicados ────────────────────────────────────────────
 class _ComunicadosCard extends StatelessWidget {
-  const _ComunicadosCard();
+  final SchoolSummary? summary;
+  const _ComunicadosCard({required this.summary});
+
+  String _relativeDate(DateTime date) {
+    final days = DateTime.now().difference(date).inDays;
+    if (days <= 0) return 'hoy';
+    if (days == 1) return 'hace 1 día';
+    return 'hace $days días';
+  }
 
   @override
   Widget build(BuildContext context) {
-    return _BaseCard(
-      child: Row(
-        children: [
-          _IconCircle(
-            size: 32,
-            bg: _kPrimaryLt,
-            child: const Icon(Icons.campaign_outlined, color: _kPrimary, size: 16),
+    final latest = summary?.latestAnnouncement;
+    final subtitle = latest != null ? 'último: ${_relativeDate(latest.createdAt)}' : 'sin comunicados aún';
+    return GestureDetector(
+      onTap: () => Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(
+          builder: (_) => BlocProvider(
+            create: (_) => AnnouncementsBloc(AnnouncementsDataSource(context.read<ApiClient>())),
+            child: const AnnouncementsPage(),
           ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('comunicados institucionales',
-                    style: TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600, color: _kDark)),
-                SizedBox(height: 2),
-                Text('último: hace 3 días',
-                    style: TextStyle(fontSize: 11, color: _kGray)),
-              ],
+        ),
+      ),
+      child: _BaseCard(
+        child: Row(
+          children: [
+            _IconCircle(
+              size: 32,
+              bg: _kPrimaryLt,
+              child: const Icon(Icons.campaign_outlined, color: _kPrimary, size: 16),
             ),
-          ),
-          const _Chevron(),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(latest?.title ?? 'comunicados institucionales',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600, color: _kDark)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: const TextStyle(fontSize: 11, color: _kGray)),
+                ],
+              ),
+            ),
+            const _Chevron(),
+          ],
+        ),
       ),
     );
   }
@@ -363,24 +436,42 @@ class _ComunicadosCard extends StatelessWidget {
 
 // ── Accesos rápidos ────────────────────────────────────────
 class _AccesosRapidos extends StatelessWidget {
-  const _AccesosRapidos();
-
-  static const _items = [
-    (Icons.door_front_door_outlined, 'salones'),
-    (Icons.person_outline,            'profesoras'),
-    (Icons.receipt_long_outlined,     'pensiones'),
-  ];
+  final SchoolSummary? summary;
+  const _AccesosRapidos({required this.summary});
 
   @override
   Widget build(BuildContext context) {
+    final items = <(IconData, String, VoidCallback)>[
+      (
+        Icons.door_front_door_outlined,
+        'salones',
+        () => Navigator.of(context, rootNavigator: true)
+            .push(MaterialPageRoute(builder: (_) => const SalonesPage())),
+      ),
+      (
+        Icons.person_outline,
+        'profesoras',
+        () => Navigator.of(context, rootNavigator: true)
+            .push(MaterialPageRoute(builder: (_) => const PersonalPage())),
+      ),
+      (
+        Icons.receipt_long_outlined,
+        'pensiones',
+        () => Navigator.of(context, rootNavigator: true).push(
+              MaterialPageRoute(
+                builder: (_) => PensionesPage(overdueTotal: summary?.overduePaymentsTotal ?? 0),
+              ),
+            ),
+      ),
+    ];
     return Row(
-      children: _items.map((item) {
+      children: items.map((item) {
         return Expanded(
           child: GestureDetector(
-            onTap: () {},
+            onTap: item.$3,
             child: Container(
               margin: EdgeInsets.only(
-                right: item == _items.last ? 0 : 9,
+                right: item == items.last ? 0 : 9,
               ),
               padding: const EdgeInsets.symmetric(vertical: 16),
               decoration: BoxDecoration(

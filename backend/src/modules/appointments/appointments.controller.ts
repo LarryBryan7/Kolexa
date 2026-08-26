@@ -53,7 +53,7 @@ export class AppointmentsController {
     @CurrentUser() user: UserPayload,
     @Query('role') role: 'parent' | 'teacher' = 'parent',
   ) {
-    return this.service.getMyAppointments(user.sub, role);
+    return this.service.getMyAppointments(user, role);
   }
 
   @Patch(':id/status')

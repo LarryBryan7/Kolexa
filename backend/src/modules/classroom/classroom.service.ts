@@ -4,6 +4,8 @@ import { google } from 'googleapis';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SupabaseStorageService } from '../storage/supabase-storage.service';
+import { UserPayload } from '../../common/decorators/current-user.decorator';
+import { isSchoolAdminOf } from '../../common/utils/school-staff-access';
 
 const STUDENT_SCOPES = [
   'https://www.googleapis.com/auth/classroom.courses.readonly',
@@ -140,6 +142,24 @@ export class ClassroomService {
     if (!rel) {
       throw new ForbiddenException('No tienes acceso a este alumno');
     }
+  }
+
+  // ── assertStudentReadAccess ────────────────────────────────
+  // Igual que assertStudentOwnedByParent, pero además deja pasar al
+  // director (school_admin) del MISMO colegio del alumno. Solo se usa en
+  // endpoints de LECTURA (status/courses/upcoming/overview/*-status,
+  // parent/home, parent/today-summary) — auth-url, sync y avatar siguen
+  // usando assertStudentOwnedByParent sin este bypass, porque son acciones
+  // (disparan/renuevan la conexión OAuth del PADRE, o escriben datos), no
+  // simples lecturas.
+  async assertStudentReadAccess(user: UserPayload, studentId: bigint): Promise<void> {
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: { schoolId: true },
+    });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+    if (isSchoolAdminOf(user, student.schoolId)) return;
+    await this.assertStudentOwnedByParent(user.sub, studentId);
   }
 
   // ── Foto de perfil del alumno (subida por el padre) ──────
@@ -815,7 +835,15 @@ export class ClassroomService {
   }
 
   // ── Sincroniza cursos y tareas desde Google Classroom ────
-  async syncStudent(studentId: bigint): Promise<{ courses: number; courseworks: number; cacheHit: boolean }> {
+  // force=true salta la caché de 15 min y sincroniza con Google sí o sí.
+  // Lo usa el pull-to-refresh manual del home del padre (una acción
+  // explícita del usuario pidiendo datos frescos) — las cargas automáticas
+  // (abrir la app) siguen usando la caché para no pagar los ~26-30s del
+  // sync completo en cada apertura (ver plan-optimizacion-sync-classroom.md).
+  async syncStudent(
+    studentId: bigint,
+    force = false,
+  ): Promise<{ courses: number; courseworks: number; cacheHit: boolean }> {
     // ── Caché: si el último sync fue hace menos de 5 minutos, no llamamos a
     // Google de nuevo. Devolvemos los datos ya sincronizados de la BD local.
     // Optimización: en lugar de 3 consultas (findFirst + 2 counts) que el pooler
@@ -842,7 +870,7 @@ export class ClassroomService {
     // como para re-sync cada 5 min. Con 15 min, si el usuario espera unos minutos
     // entre syncs, el caché sigue activo y el sync es rápido (~2s) en vez de
     // volver a hacer el sync completo (~26s).
-    const cacheHit = !!lastSyncedAt && diffMs < 15 * 60 * 1000;
+    const cacheHit = !force && !!lastSyncedAt && diffMs < 15 * 60 * 1000;
     if (cacheHit) {
       return { courses: cachedCourses, courseworks: cachedCourseworks, cacheHit: true };
     }
@@ -957,10 +985,30 @@ export class ClassroomService {
       }
     }
     if (allCws.length > 0) {
-      await this.prisma.gcCoursework.createMany({
-        data: allCws,
-        skipDuplicates: true,
-      });
+      // INSERT ... ON CONFLICT DO UPDATE en 1 sola consulta: antes esto era
+      // un createMany con skipDuplicates, que solo insertaba tareas NUEVAS y
+      // dejaba intactas (nunca actualizaba) las que ya existían — si el
+      // docente cambiaba la fecha de entrega, el título o los puntos de una
+      // tarea ya sincronizada, ese cambio nunca llegaba a la BD de Kolexa
+      // por más veces que se volviera a sincronizar. ON CONFLICT DO UPDATE
+      // corrige eso sin perder el ahorro de 1 sola ida al pooler.
+      const valueRows = allCws.map(
+        (cw) =>
+          Prisma.sql`(${cw.courseId}, ${cw.googleId}, ${cw.title}, ${cw.description}, ${cw.dueDate}, ${cw.maxPoints}, ${cw.workType}, ${cw.state}, ${cw.alternateLink}, NOW())`,
+      );
+      await this.prisma.$executeRaw`
+        INSERT INTO gc_coursework (course_id, google_id, title, description, due_date, max_points, work_type, state, alternate_link, synced_at)
+        VALUES ${Prisma.join(valueRows)}
+        ON CONFLICT (course_id, google_id) DO UPDATE SET
+          title = EXCLUDED.title,
+          description = EXCLUDED.description,
+          due_date = EXCLUDED.due_date,
+          max_points = EXCLUDED.max_points,
+          work_type = EXCLUDED.work_type,
+          state = EXCLUDED.state,
+          alternate_link = EXCLUDED.alternate_link,
+          synced_at = EXCLUDED.synced_at
+      `;
     }
 
     // 3c. Submissions: mapa googleId→id de courseworks del estudiante (1 consulta)
