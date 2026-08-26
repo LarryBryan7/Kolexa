@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
 import '../../classroom/data/models/gc_models.dart';
 import '../../classroom/data/repository/classroom_repository.dart';
+import '../../../core/utils/lima_date.dart';
 
 const _kBg        = Color(0xFFF7F6F3);
 const _kPrimary   = Color(0xFF5B4A9E);
@@ -17,11 +18,13 @@ const _kOverdue   = Color(0xFFB91C1C);
 const _kOverdueBg = Color(0xFFFEE2E2);
 
 // ── Helpers de semana ──────────────────────────────────────
+// "Esta semana" arranca al día siguiente de hoy: el día actual ya lo
+// cubre la pestaña/tarjeta "Hoy", así que no se duplica aquí.
 (DateTime, DateTime) _currentWeekBounds() {
-  final now = DateTime.now();
-  final monday = now.subtract(Duration(days: now.weekday - 1));
-  final start = DateTime(monday.year, monday.month, monday.day);
-  final end = start.add(const Duration(days: 6, hours: 23, minutes: 59, seconds: 59));
+  final today = limaToday();
+  final weekStart = today.subtract(Duration(days: today.weekday - 1));
+  final end = weekStart.add(const Duration(days: 6, hours: 23, minutes: 59, seconds: 59));
+  final start = today.add(const Duration(days: 1));
   return (start, end);
 }
 
@@ -29,7 +32,7 @@ List<GcCoursework> _filterThisWeek(List<GcCoursework> all) {
   final (start, end) = _currentWeekBounds();
   return all.where((cw) {
     if (cw.dueDate == null) return false;
-    final d = DateTime(cw.dueDate!.year, cw.dueDate!.month, cw.dueDate!.day);
+    final d = limaDay(cw.dueDate!);
     return !d.isBefore(start) && !d.isAfter(end);
   }).toList()
     ..sort((a, b) => a.dueDate!.compareTo(b.dueDate!));
@@ -206,14 +209,12 @@ class _WeeklyList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final today = DateTime.now();
-    final todayNorm = DateTime(today.year, today.month, today.day);
+    final todayNorm = limaToday();
 
     // Agrupar por día
     final Map<DateTime, List<GcCoursework>> byDay = {};
     for (final cw in items) {
-      final d = cw.dueDate!;
-      final day = DateTime(d.year, d.month, d.day);
+      final day = limaDay(cw.dueDate!);
       byDay.putIfAbsent(day, () => []).add(cw);
     }
     final days = byDay.keys.toList()..sort();

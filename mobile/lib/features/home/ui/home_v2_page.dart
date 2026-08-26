@@ -16,6 +16,7 @@ import '../../classroom/data/repository/classroom_repository.dart';
 import 'novedades_detail_page.dart';
 import 'esta_semana_page.dart';
 import 'pendientes_page.dart';
+import '../../../core/utils/lima_date.dart';
 import 'home_docente_page.dart' show PerfilTab;
 
 // ── Paleta extraída de Figma ──────────────────────────────
@@ -584,7 +585,16 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
                           const SizedBox(height: 12),
 
                           // ── Card: urgente para hoy ─────────────
-                          const _UrgentCard(),
+                          // Tareas de Classroom que vencen hoy — mismo dato
+                          // ya cargado por /parent/home, sin petición extra.
+                          _UrgentCard(
+                            tasksToday: (_parentHome?.upcomingStatus.upcoming ?? [])
+                                .where((cw) =>
+                                    cw.dueDate != null &&
+                                    limaDay(cw.dueDate!) == limaToday())
+                                .toList(),
+                            studentName: children[safeIndex].fullName,
+                          ),
                           const SizedBox(height: 12),
 
                           // ── Card: novedades de hoy ─────────────
@@ -1829,13 +1839,24 @@ class _PendienteRow extends StatelessWidget {
 // Card: urgente para hoy (ámbar)
 // ─────────────────────────────────────────────────────────
 class _UrgentCard extends StatelessWidget {
-  const _UrgentCard();
+  final List<GcCoursework> tasksToday;
+  final String studentName;
+
+  const _UrgentCard({
+    required this.tasksToday,
+    required this.studentName,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () => Navigator.of(context, rootNavigator: true).push(
-        MaterialPageRoute(builder: (_) => const PendientesPage()),
+        MaterialPageRoute(
+          builder: (_) => PendientesPage(
+            studentName: studentName,
+            todayTasks: tasksToday,
+          ),
+        ),
       ),
       child: Container(
         width: double.infinity,
@@ -1857,19 +1878,25 @@ class _UrgentCard extends StatelessWidget {
                   color: Color(0xFF693902), size: 18),
             ),
             const SizedBox(width: 12),
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Urgente para hoy',
+                  const Text('Urgente para hoy',
                       style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFF693902))),
-                  SizedBox(height: 1),
-                  Text('1 autorización · 1 pago',
-                      style:
-                          TextStyle(fontSize: 13, color: Color(0xFF693902))),
+                  const SizedBox(height: 1),
+                  Text(
+                    tasksToday.isEmpty
+                        ? 'Sin tareas urgentes hoy'
+                        : tasksToday.length == 1
+                            ? '1 tarea vence hoy'
+                            : '${tasksToday.length} tareas vencen hoy',
+                    style:
+                        const TextStyle(fontSize: 13, color: Color(0xFF693902)),
+                  ),
                 ],
               ),
             ),
@@ -1955,14 +1982,16 @@ class _EstaSemanRowState extends State<_EstaSemanRow> {
       return;
     }
     final all = status.upcoming;
-    final now = DateTime.now();
-    final monday = now.subtract(Duration(days: now.weekday - 1));
-    final weekStart = DateTime(monday.year, monday.month, monday.day);
+    final today = limaToday();
+    // "Esta semana" arranca al día siguiente de hoy: el día actual ya
+    // lo cubre la tarjeta/pestaña "Hoy", así que no se duplica aquí.
+    final weekStart = today.subtract(Duration(days: today.weekday - 1));
     final weekEnd = weekStart.add(const Duration(days: 6, hours: 23, minutes: 59, seconds: 59));
+    final restOfWeekStart = today.add(const Duration(days: 1));
     final count = all.where((cw) {
       if (cw.dueDate == null) return false;
-      final d = DateTime(cw.dueDate!.year, cw.dueDate!.month, cw.dueDate!.day);
-      return !d.isBefore(weekStart) && !d.isAfter(weekEnd);
+      final d = limaDay(cw.dueDate!);
+      return !d.isBefore(restOfWeekStart) && !d.isAfter(weekEnd);
     }).length;
     setState(() {
       _connected = status.connected;
