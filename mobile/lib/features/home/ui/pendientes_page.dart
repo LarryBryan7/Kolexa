@@ -14,6 +14,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:intl/intl.dart';
+import '../../classroom/data/models/gc_models.dart';
 
 // Íconos exportados 1:1 desde Figma (exportAsync SVG_STRING) — se
 // tiñen en runtime con colorFilter según el estado activo/inactivo,
@@ -58,12 +60,27 @@ const _kChipActiveText = Color(0xFF693902);
 const _kTaskIconBg = Color(0xFFFDEED3);
 const _kTaskAmber = Color(0xFF96650C);
 
+// Si no hay pendientes en un chip, se muestra solo el nombre (sin el
+// "0" ni ningún número) — el número solo aparece cuando hay algo real.
+String _chipLabel(String name, int count) =>
+    count > 0 ? '$name  $count' : name;
+
 enum _RangoTab { hoy, semana, calendario }
 
 enum _FiltroChip { tareas, comunicados, reuniones }
 
 class PendientesPage extends StatefulWidget {
-  const PendientesPage({super.key});
+  final String studentName;
+  // Tareas de Classroom que vencen HOY (ya cargadas por el Home vía
+  // /parent/home — esta pantalla no hace su propia petición, igual que
+  // EstaSemanPage reutiliza los datos que ya trajo el Home).
+  final List<GcCoursework> todayTasks;
+
+  const PendientesPage({
+    super.key,
+    this.studentName = '',
+    this.todayTasks = const [],
+  });
 
   @override
   State<PendientesPage> createState() => _PendientesPageState();
@@ -113,11 +130,14 @@ class _PendientesPageState extends State<PendientesPage> {
                             color: _kTextDark,
                           ),
                         ),
-                        // TODO: reemplazar por alumno/fecha reales una vez
-                        // que se defina la conexión a datos de esta pantalla.
-                        const Text(
-                          'Sofía Arias · lunes 22 de junio',
-                          style: TextStyle(fontSize: 12, color: _kGray),
+                        Text(
+                          [
+                            if (widget.studentName.isNotEmpty)
+                              widget.studentName,
+                            DateFormat("EEEE d 'de' MMMM", 'es')
+                                .format(DateTime.now()),
+                          ].join(' · '),
+                          style: const TextStyle(fontSize: 12, color: _kGray),
                         ),
                       ],
                     ),
@@ -142,7 +162,7 @@ class _PendientesPageState extends State<PendientesPage> {
                     Row(
                       children: [
                         _FiltroChipWidget(
-                          label: 'Tareas 2',
+                          label: _chipLabel('Tareas', widget.todayTasks.length),
                           width: 71,
                           active: _filtro == _FiltroChip.tareas,
                           onTap: () =>
@@ -150,7 +170,7 @@ class _PendientesPageState extends State<PendientesPage> {
                         ),
                         const SizedBox(width: 6),
                         _FiltroChipWidget(
-                          label: 'Comunicados  1',
+                          label: _chipLabel('Comunicados', 1),
                           width: 108,
                           active: _filtro == _FiltroChip.comunicados,
                           onTap: () =>
@@ -158,7 +178,7 @@ class _PendientesPageState extends State<PendientesPage> {
                         ),
                         const SizedBox(width: 6),
                         _FiltroChipWidget(
-                          label: 'Reuniones 2',
+                          label: _chipLabel('Reuniones', 2),
                           width: 89,
                           active: _filtro == _FiltroChip.reuniones,
                           onTap: () =>
@@ -168,19 +188,31 @@ class _PendientesPageState extends State<PendientesPage> {
                     ),
                     const SizedBox(height: 10),
 
-                    // ── Lista de tarjetas (estado Hoy + Tareas, único
-                    // diseñado en Figma por ahora) ──────────────
+                    // ── Lista de tarjetas ────────────────────────
+                    // Hoy + Tareas ya usa datos reales de Classroom (las
+                    // tareas que vencen hoy). El resto de combinaciones
+                    // (Semana/Calendario, Comunicados/Reuniones) sigue
+                    // pendiente de conectar a datos reales.
                     if (_tab == _RangoTab.hoy &&
                         _filtro == _FiltroChip.tareas) ...[
-                      const _TaskCard(
-                        title: 'Colorear mariposa',
-                        subtitle: 'Vence hoy · Sección Girasoles',
-                      ),
-                      const SizedBox(height: 8),
-                      const _TaskCard(
-                        title: 'Traer material para manualidad',
-                        subtitle: 'Vence hoy 5:00 pm',
-                      ),
+                      if (widget.todayTasks.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 24),
+                          child: Center(
+                            child: Text(
+                              'Sin tareas que venzan hoy.',
+                              style: TextStyle(fontSize: 13, color: _kGray),
+                            ),
+                          ),
+                        )
+                      else
+                        for (final cw in widget.todayTasks) ...[
+                          _TaskCard(
+                            title: cw.title,
+                            subtitle: 'Vence hoy · ${cw.courseName}',
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                     ] else
                       const Padding(
                         padding: EdgeInsets.only(top: 24),
