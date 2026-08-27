@@ -40,10 +40,17 @@ class MainActivity : FlutterActivity() {
     // de Kolexa (usa el context de la Activity sin esa bandera), así que
     // en "apps recientes" se ve como una sola tarjeta que cambia de
     // ícono en vez de dos apps independientes.
+    //
+    // FLAG_ACTIVITY_MULTIPLE_TASK además evita que, si Classroom ya
+    // queda corriendo en segundo plano (ej. el usuario tocó "inicio" en
+    // vez de "atrás"), Android simplemente traiga esa tarea vieja al
+    // frente TAL COMO la dejaron (ignorando el nuevo link) — con esta
+    // bandera cada toque abre una instancia nueva que sí navega a la
+    // tarea específica.
     private fun tryOpenExternalUrl(url: String): Boolean {
         return try {
             val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
             startActivity(intent)
             true
         } catch (_: Exception) {
