@@ -110,6 +110,24 @@ class ManufacturerSettingsService {
     }
   }
 
+  // Abre una URL externa (ej. una tarea de Google Classroom) forzando
+  // una tarea de Android independiente (FLAG_ACTIVITY_NEW_TASK). Sin
+  // esto, url_launcher abre la app externa DENTRO de la misma tarea de
+  // Kolexa — funciona, pero en "apps recientes" aparece como una sola
+  // tarjeta que cambia de ícono en vez de dos apps independientes.
+  Future<bool> openExternalUrl(String url) async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final result = await _channel.invokeMethod<bool>(
+        'openExternalUrl',
+        {'url': url},
+      );
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ── Tracking de recordatorios ────────────────────────────
 
   static const _kDone = 'autostart_done';
