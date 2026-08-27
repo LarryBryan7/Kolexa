@@ -24,9 +24,31 @@ class MainActivity : FlutterActivity() {
                         val opened = tryOpenAutostartSettings()
                         result.success(opened)
                     }
+                    "openExternalUrl" -> {
+                        val url = call.argument<String>("url")
+                        val opened = if (url != null) tryOpenExternalUrl(url) else false
+                        result.success(opened)
+                    }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    // Abre un link (ej. una tarea de Google Classroom) forzando una tarea
+    // de Android independiente (FLAG_ACTIVITY_NEW_TASK). Sin esto,
+    // url_launcher inicia la actividad externa dentro de la MISMA tarea
+    // de Kolexa (usa el context de la Activity sin esa bandera), así que
+    // en "apps recientes" se ve como una sola tarjeta que cambia de
+    // ícono en vez de dos apps independientes.
+    private fun tryOpenExternalUrl(url: String): Boolean {
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun tryOpenAutostartSettings(): Boolean {

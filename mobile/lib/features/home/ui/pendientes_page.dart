@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../core/services/manufacturer_settings_service.dart';
 import '../../classroom/data/models/gc_models.dart';
 
 // Íconos exportados 1:1 desde Figma (exportAsync SVG_STRING) — se
@@ -489,6 +490,12 @@ class _TaskCard extends StatelessWidget {
   Future<void> _abrirClassroom() async {
     final link = classroomLink;
     if (link == null) return;
+    // En Android, url_launcher abre la app externa dentro de la MISMA
+    // tarea de Kolexa (sin FLAG_ACTIVITY_NEW_TASK) — funciona, pero en
+    // "apps recientes" se ve como una sola tarjeta compartida en vez de
+    // dos apps independientes. El canal nativo abre con esa bandera.
+    final openedNative = await ManufacturerSettingsService.instance.openExternalUrl(link);
+    if (openedNative) return;
     final uri = Uri.tryParse(link);
     if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
