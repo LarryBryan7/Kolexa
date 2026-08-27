@@ -15,55 +15,44 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../classroom/data/models/gc_models.dart';
 
 // Íconos exportados 1:1 desde Figma (exportAsync SVG_STRING) — se
 // tiñen en runtime con colorFilter según el estado activo/inactivo,
 // en vez de depender del stroke color fijo que trae cada SVG.
-const _kSvgChecklist =
-    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'
-    '<path d="M6.41004 13.3337H4.66671C4.31309 13.3337 3.97395 13.1932 3.7239 12.9431C3.47385 12.6931 3.33337 12.3539 3.33337 12.0003V4.00033C3.33337 3.6467 3.47385 3.30756 3.7239 3.05752C3.97395 2.80747 4.31309 2.66699 4.66671 2.66699H10C10.3537 2.66699 10.6928 2.80747 10.9428 3.05752C11.1929 3.30756 11.3334 3.6467 11.3334 4.00033V9.33366M9.33337 12.667L10.6667 14.0003L13.3334 11.3337M6.00004 5.33366H8.66671M6.00004 8.00033H7.33337" stroke="#693902" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
-    '</svg>';
-
-const _kSvgCalendarStats =
-    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'
-    '<path d="M7.86333 14H3.33333C2.97971 14 2.64057 13.8595 2.39052 13.6095C2.14048 13.3594 2 13.0203 2 12.6667V4.66667C2 4.31304 2.14048 3.97391 2.39052 3.72386C2.64057 3.47381 2.97971 3.33333 3.33333 3.33333H11.3333C11.687 3.33333 12.0261 3.47381 12.2761 3.72386C12.5262 3.97391 12.6667 4.31304 12.6667 4.66667V7.33333H2M12 9.33333V12H14.6667M12 9.33333C12.7072 9.33333 13.3855 9.61428 13.8856 10.1144C14.3857 10.6145 14.6667 11.2928 14.6667 12M12 9.33333C11.2928 9.33333 10.6145 9.61428 10.1144 10.1144C9.61428 10.6145 9.33333 11.2928 9.33333 12C9.33333 12.7072 9.61428 13.3855 10.1144 13.8856C10.6145 14.3857 11.2928 14.6667 12 14.6667C12.7072 14.6667 13.3855 14.3857 13.8856 13.8856C14.3857 13.3855 14.6667 12.7072 14.6667 12M10 2V4.66667M4.66667 2V4.66667" stroke="white" stroke-linecap="round" stroke-linejoin="round"/>'
-    '</svg>';
-
-const _kSvgSemana =
-    '<svg width="14" height="13" viewBox="0 0 14 13" fill="none" xmlns="http://www.w3.org/2000/svg">'
-    '<path d="M10.25 0.5V3.16667M3.75 0.5V3.16667M0.5 5.83333H13.5M2.9375 7.83333H2.94806M5.38313 7.83333H5.3872M7.82063 7.83333H7.8247M10.2622 7.83333H10.2663M7.8247 9.83333H7.82876M2.94563 9.83333H2.9497M5.38313 9.83333H5.3872M0.5 3.16667C0.5 2.81304 0.671205 2.47391 0.975951 2.22386C1.2807 1.97381 1.69402 1.83333 2.125 1.83333H11.875C12.306 1.83333 12.7193 1.97381 13.024 2.22386C13.3288 2.47391 13.5 2.81304 13.5 3.16667V11.1667C13.5 11.5203 13.3288 11.8594 13.024 12.1095C12.7193 12.3595 12.306 12.5 11.875 12.5H2.125C1.69402 12.5 1.2807 12.3595 0.975951 12.1095C0.671205 11.8594 0.5 11.5203 0.5 11.1667V3.16667Z" stroke="#050505" stroke-linecap="round" stroke-linejoin="round"/>'
-    '</svg>';
-
-const _kSvgCalendario =
-    '<svg width="14" height="13" viewBox="0 0 14 13" fill="none" xmlns="http://www.w3.org/2000/svg">'
-    '<path d="M9.5473 0.5V3.09259M3.51577 0.5V3.09259M0.5 5.68519H12.5631M3.51577 7.62963V10.2222M6.53153 7.62963V10.2222M9.5473 7.62963V10.2222M0.5 3.09259C0.5 2.74879 0.658866 2.41908 0.941649 2.17597C1.22443 1.93287 1.60797 1.7963 2.00788 1.7963H11.0552C11.4551 1.7963 11.8386 1.93287 12.1214 2.17597C12.4042 2.41908 12.5631 2.74879 12.5631 3.09259V10.8704C12.5631 11.2142 12.4042 11.5439 12.1214 11.787C11.8386 12.0301 11.4551 12.1667 11.0552 12.1667H2.00788C1.60797 12.1667 1.22443 12.0301 0.941649 11.787C0.658866 11.5439 0.5 11.2142 0.5 10.8704V3.09259Z" stroke="#050505" stroke-linecap="round" stroke-linejoin="round"/>'
+const _kSvgClipboardList =
+    '<svg width="20" height="21" viewBox="0 0 20 21" fill="none" xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M8.14286 3.77778H6.57143C6.15466 3.77778 5.75496 3.96508 5.46026 4.29848C5.16556 4.63187 5 5.08406 5 5.55556V16.2222C5 16.6937 5.16556 17.1459 5.46026 17.4793C5.75496 17.8127 6.15466 18 6.57143 18H14.4286C14.8453 18 15.245 17.8127 15.5397 17.4793C15.8344 17.1459 16 16.6937 16 16.2222V5.55556C16 5.08406 15.8344 4.63187 15.5397 4.29848C15.245 3.96508 14.8453 3.77778 14.4286 3.77778H12.8571M8.14286 3.77778C8.14286 3.30628 8.30842 2.8541 8.60312 2.5207C8.89782 2.1873 9.29752 2 9.71429 2H11.2857C11.7025 2 12.1022 2.1873 12.3969 2.5207C12.6916 2.8541 12.8571 3.30628 12.8571 3.77778M8.14286 3.77778C8.14286 4.24927 8.30842 4.70146 8.60312 5.03486C8.89782 5.36825 9.29752 5.55556 9.71429 5.55556H11.2857C11.7025 5.55556 12.1022 5.36825 12.3969 5.03486C12.6916 4.70146 12.8571 4.24927 12.8571 3.77778M8.14286 10H8.15071M11.2857 10H12.8571M8.14286 13.5556H8.15071M11.2857 13.5556H12.8571" stroke="#5B4A9E" stroke-linecap="round" stroke-linejoin="round"/>'
     '</svg>';
 
 const _kBg = Color(0xFFF7F6F3);
-const _kTextDark = Color(0xFF14171C);
+// "Pendientes" (título del header) — gris medio, distinto del gris de
+// subtítulo y del casi-negro de los títulos de tarjeta (medido en Figma).
+const _kHeaderTitle = Color(0xFF444444);
+// Atrás (‹) + título de cada tarjeta de tarea.
 const _kBack = Color(0xFF1E1B29);
-const _kChevron = Color(0xFF8E8E93);
 const _kGray = Color(0xFF666666);
+// Morado: acento de todo lo "activo" (chip seleccionado, tarjeta de
+// tarea, link "Ver en classroom") — reemplazó al ámbar que tenía antes.
+const _kPrimary = Color(0xFF5B4A9E);
+const _kPrimaryLt = Color(0xFFEDE8FA);
 
-// El contenedor del selector ahora usa el mismo color que el fondo de
-// la página (antes tenía #FAFAFA propio) — queda "invisible", solo se
-// ven flotando los 3 tabs.
-const _kSegmentBg = _kBg;
+// Fondo compartido por tabs y chips en su estado inactivo.
 const _kSegmentInactiveBg = Color(0xFFF0F0F0);
-const _kSegmentInactiveText = Color(0xFF050505);
-const _kHoyActiveBg = Color(0xFFA07424);
 
-const _kChipActiveBg = Color(0xFFFBF0DD);
-const _kChipActiveText = Color(0xFF693902);
+// Tab "Hoy" activo: ámbar sólido + texto blanco.
+const _kHoyActiveBg = Color(0xFFE29A2E);
+const _kAmberBadgeBg = Color(0xFFF6E0AB);
+const _kAmberBadgeText = Color(0xFF693902);
 
-const _kTaskIconBg = Color(0xFFFDEED3);
-const _kTaskAmber = Color(0xFF96650C);
+// Badge numérico (círculo) de los chips de filtro.
+const _kChipBadgeActiveBg = Color(0xFFD4C9F0);
+const _kChipBadgeInactiveBg = Color(0xFFDEDEDE);
+const _kChipBadgeInactiveText = Color(0xFFA9A9A9);
 
-// Si no hay pendientes en un chip, se muestra solo el nombre (sin el
-// "0" ni ningún número) — el número solo aparece cuando hay algo real.
-String _chipLabel(String name, int count) =>
-    count > 0 ? '$name  $count' : name;
+// Separador vertical entre "Semana" y "Calendario" en el selector.
+const _kTabDivider = Color(0xFFD0D7DF);
 
 enum _RangoTab { hoy, semana, calendario }
 
@@ -75,11 +64,16 @@ class PendientesPage extends StatefulWidget {
   // /parent/home — esta pantalla no hace su propia petición, igual que
   // EstaSemanPage reutiliza los datos que ya trajo el Home).
   final List<GcCoursework> todayTasks;
+  // Conteo real del resto de la semana (ya calculado por el Home) —
+  // solo alimenta el badge del tab "Semana"; el contenido de esa
+  // pestaña sigue sin conectar a datos reales.
+  final int weekCount;
 
   const PendientesPage({
     super.key,
     this.studentName = '',
     this.todayTasks = const [],
+    this.weekCount = 0,
   });
 
   @override
@@ -98,26 +92,37 @@ class _PendientesPageState extends State<PendientesPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Header: fondo blanco, volver + título + subtítulo ──
+            // ── Header: fondo blanco (esquinas inferiores redondeadas),
+            // botón atrás circular + título + subtítulo ──
             Container(
               width: double.infinity,
-              color: Colors.white,
-              padding: const EdgeInsets.fromLTRB(18, 13, 18, 13),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(16),
+                  bottomRight: Radius.circular(16),
+                ),
+              ),
+              padding: const EdgeInsets.fromLTRB(7, 13, 18, 13),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  // El nodo "‹" en Figma es texto, no un ícono — y el
-                  // ícono de calendario que estaba junto a él antes
-                  // está vacío en el propio archivo (0 hijos), no se copia.
                   InkWell(
                     onTap: () => Navigator.of(context).maybePop(),
-                    borderRadius: BorderRadius.circular(16),
-                    child: const Padding(
-                      padding: EdgeInsets.only(top: 6, right: 7),
-                      child: Text('‹',
+                    borderRadius: BorderRadius.circular(30),
+                    child: Container(
+                      width: 27,
+                      height: 27,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                        color: _kSegmentInactiveBg,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Text('‹',
                           style: TextStyle(fontSize: 20, color: _kBack)),
                     ),
                   ),
+                  const SizedBox(width: 9),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -127,7 +132,7 @@ class _PendientesPageState extends State<PendientesPage> {
                           style: TextStyle(
                             fontSize: 19,
                             fontWeight: FontWeight.bold,
-                            color: _kTextDark,
+                            color: _kHeaderTitle,
                           ),
                         ),
                         Text(
@@ -155,6 +160,8 @@ class _PendientesPageState extends State<PendientesPage> {
                     _RangoSelector(
                       selected: _tab,
                       onChanged: (t) => setState(() => _tab = t),
+                      hoyCount: widget.todayTasks.length,
+                      semanaCount: widget.weekCount,
                     ),
                     const SizedBox(height: 8),
 
@@ -162,28 +169,31 @@ class _PendientesPageState extends State<PendientesPage> {
                     Row(
                       children: [
                         _FiltroChipWidget(
-                          label: _chipLabel('Tareas', widget.todayTasks.length),
-                          width: 71,
+                          label: 'Tareas',
+                          count: widget.todayTasks.length,
+                          width: 73,
                           active: _filtro == _FiltroChip.tareas,
                           onTap: () =>
                               setState(() => _filtro = _FiltroChip.tareas),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 5),
                         _FiltroChipWidget(
                           // Sin datos reales de comunicados todavía — sin
                           // número hasta que se conecte a algo real.
-                          label: _chipLabel('Comunicados', 0),
-                          width: 108,
+                          label: 'Comunicados',
+                          count: 0,
+                          width: 112,
                           active: _filtro == _FiltroChip.comunicados,
                           onTap: () =>
                               setState(() => _filtro = _FiltroChip.comunicados),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 5),
                         _FiltroChipWidget(
                           // Sin datos reales de reuniones todavía — sin
                           // número hasta que se conecte a algo real.
-                          label: _chipLabel('Reuniones', 0),
-                          width: 89,
+                          label: 'Reuniones',
+                          count: 0,
+                          width: 90,
                           active: _filtro == _FiltroChip.reuniones,
                           onTap: () =>
                               setState(() => _filtro = _FiltroChip.reuniones),
@@ -214,6 +224,7 @@ class _PendientesPageState extends State<PendientesPage> {
                           _TaskCard(
                             title: cw.title,
                             subtitle: 'Vence hoy · ${cw.courseName}',
+                            classroomLink: cw.alternateLink,
                           ),
                           const SizedBox(height: 8),
                         ],
@@ -239,75 +250,110 @@ class _PendientesPageState extends State<PendientesPage> {
 }
 
 // ── Selector Hoy / Semana / Calendario ──────────────────────
+// Tres segmentos contiguos (sin separación ni contenedor exterior):
+// Hoy (redondeado a la izquierda) + Semana (recto) + Calendario
+// (redondeado a la derecha), con una línea divisoria fina entre
+// Semana y Calendario — copiado 1:1 de Figma.
 class _RangoSelector extends StatelessWidget {
   final _RangoTab selected;
   final ValueChanged<_RangoTab> onChanged;
+  final int hoyCount;
+  final int semanaCount;
 
-  const _RangoSelector({required this.selected, required this.onChanged});
+  const _RangoSelector({
+    required this.selected,
+    required this.onChanged,
+    required this.hoyCount,
+    required this.semanaCount,
+  });
+
+  // Proporciones exactas medidas en Figma (84 : 101 : 107 de 292 total).
+  static const double _wHoy = 84;
+  static const double _wSemana = 101;
+  static const double _wCalendario = 107;
+  static const double _wTotal = _wHoy + _wSemana + _wCalendario;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 36,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: _kSegmentBg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          _RangoTabItem(
-            label: 'Hoy',
-            svg: _kSvgCalendarStats,
-            // Extremo izquierdo del selector: la esquina exterior
-            // hereda el radio del contenedor (20), la interior es 5.
-            radius: const BorderRadius.only(
-              topLeft: Radius.circular(20),
-              bottomLeft: Radius.circular(20),
-              topRight: Radius.circular(5),
-              bottomRight: Radius.circular(5),
-            ),
-            active: selected == _RangoTab.hoy,
-            onTap: () => onChanged(_RangoTab.hoy),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Separador entre Hoy/Semana y entre Semana/Calendario — los
+        // tres segmentos son contiguos (sin gap), así que el límite
+        // entre cada par se marca con esta línea fina, igual en ambos.
+        final hoySemanaDividerX = constraints.maxWidth * _wHoy / _wTotal;
+        final semanaCalendarioDividerX =
+            constraints.maxWidth * (_wHoy + _wSemana) / _wTotal;
+        return SizedBox(
+          height: 30,
+          child: Stack(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    flex: _wHoy.toInt(),
+                    child: _RangoTabItem(
+                      label: 'Hoy',
+                      count: hoyCount,
+                      radius: const BorderRadius.only(
+                        topLeft: Radius.circular(10),
+                        bottomLeft: Radius.circular(10),
+                      ),
+                      active: selected == _RangoTab.hoy,
+                      onTap: () => onChanged(_RangoTab.hoy),
+                    ),
+                  ),
+                  Expanded(
+                    flex: _wSemana.toInt(),
+                    child: _RangoTabItem(
+                      label: 'Semana',
+                      count: semanaCount,
+                      radius: BorderRadius.zero,
+                      active: selected == _RangoTab.semana,
+                      onTap: () => onChanged(_RangoTab.semana),
+                    ),
+                  ),
+                  Expanded(
+                    flex: _wCalendario.toInt(),
+                    child: _RangoTabItem(
+                      label: 'Calendario',
+                      radius: const BorderRadius.only(
+                        topRight: Radius.circular(10),
+                        bottomRight: Radius.circular(10),
+                      ),
+                      active: selected == _RangoTab.calendario,
+                      onTap: () => onChanged(_RangoTab.calendario),
+                    ),
+                  ),
+                ],
+              ),
+              Positioned(
+                left: hoySemanaDividerX - 0.5,
+                top: 7,
+                child: Container(width: 1, height: 16, color: _kTabDivider),
+              ),
+              Positioned(
+                left: semanaCalendarioDividerX - 0.5,
+                top: 7,
+                child: Container(width: 1, height: 16, color: _kTabDivider),
+              ),
+            ],
           ),
-          const SizedBox(width: 3),
-          _RangoTabItem(
-            label: 'Semana',
-            svg: _kSvgSemana,
-            radius: BorderRadius.circular(5),
-            active: selected == _RangoTab.semana,
-            onTap: () => onChanged(_RangoTab.semana),
-          ),
-          const SizedBox(width: 3),
-          _RangoTabItem(
-            label: 'Calendario',
-            svg: _kSvgCalendario,
-            // Extremo derecho: exterior 20, interior 5.
-            radius: const BorderRadius.only(
-              topRight: Radius.circular(20),
-              bottomRight: Radius.circular(20),
-              topLeft: Radius.circular(5),
-              bottomLeft: Radius.circular(5),
-            ),
-            active: selected == _RangoTab.calendario,
-            onTap: () => onChanged(_RangoTab.calendario),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
 
 class _RangoTabItem extends StatelessWidget {
   final String label;
-  final String svg;
+  final int count;
   final BorderRadius radius;
   final bool active;
   final VoidCallback onTap;
 
   const _RangoTabItem({
     required this.label,
-    required this.svg,
+    this.count = 0,
     required this.radius,
     required this.active,
     required this.onTap,
@@ -315,36 +361,49 @@ class _RangoTabItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = active ? Colors.white : _kSegmentInactiveText;
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          height: 30,
-          decoration: BoxDecoration(
-            color: active ? _kHoyActiveBg : _kSegmentInactiveBg,
-            borderRadius: radius,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SvgPicture.string(
-                svg,
-                width: 14,
-                height: 14,
-                colorFilter: ColorFilter.mode(fg, BlendMode.srcIn),
+    final fg = active ? Colors.white : _kGray;
+    final badgeBg = active ? _kAmberBadgeBg : _kChipBadgeInactiveBg;
+    final badgeFg = active ? _kAmberBadgeText : _kChipBadgeInactiveText;
+    // Calendario es un modo sin conteo — sin badge, solo texto (igual
+    // que en Figma, ya no muestra el ícono de calendario al costado).
+    final showBadge = count > 0;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 30,
+        decoration: BoxDecoration(
+          color: active ? _kHoyActiveBg : _kSegmentInactiveBg,
+          borderRadius: radius,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: active ? FontWeight.w500 : FontWeight.w400,
+                color: fg,
               ),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: active ? FontWeight.w600 : FontWeight.w500,
-                  color: fg,
+            ),
+            if (showBadge) ...[
+              const SizedBox(width: 6),
+              Container(
+                width: 15,
+                height: 15,
+                decoration: BoxDecoration(color: badgeBg, shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w500,
+                    color: badgeFg,
+                  ),
                 ),
               ),
             ],
-          ),
+          ],
         ),
       ),
     );
@@ -354,12 +413,14 @@ class _RangoTabItem extends StatelessWidget {
 // ── Chip de filtro (Tareas / Comunicados / Reuniones) ───────
 class _FiltroChipWidget extends StatelessWidget {
   final String label;
+  final int count;
   final double width;
   final bool active;
   final VoidCallback onTap;
 
   const _FiltroChipWidget({
     required this.label,
+    required this.count,
     required this.width,
     required this.active,
     required this.onTap,
@@ -367,23 +428,42 @@ class _FiltroChipWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bg = active ? _kPrimaryLt : _kSegmentInactiveBg;
+    final fg = active ? _kPrimary : _kGray;
+    final badgeBg = active ? _kChipBadgeActiveBg : _kChipBadgeInactiveBg;
+    final badgeFg = active ? _kPrimary : _kChipBadgeInactiveText;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         width: width,
-        height: 30,
+        height: 26,
         decoration: BoxDecoration(
-          color: active ? _kChipActiveBg : Colors.white,
+          color: bg,
           borderRadius: BorderRadius.circular(20),
         ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
-            color: active ? _kChipActiveText : _kGray,
-          ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              label,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: fg),
+            ),
+            // Si no hay pendientes en este chip, no se muestra ningún
+            // número — solo el nombre.
+            if (count > 0) ...[
+              const SizedBox(width: 4),
+              Container(
+                width: 15,
+                height: 15,
+                decoration: BoxDecoration(color: badgeBg, shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: Text(
+                  '$count',
+                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w500, color: badgeFg),
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -394,59 +474,115 @@ class _FiltroChipWidget extends StatelessWidget {
 class _TaskCard extends StatelessWidget {
   final String title;
   final String subtitle;
+  // Si la tarea trae link de Classroom, se muestra la fila "Ver en
+  // classroom" (con el ícono oficial); si no, la tarjeta se queda solo
+  // con el chevron — copiado 1:1 del comportamiento en Figma (la
+  // tarjeta "Colorear mariposa" sí lo tiene, "Traer material..." no).
+  final String? classroomLink;
 
-  const _TaskCard({required this.title, required this.subtitle});
+  const _TaskCard({
+    required this.title,
+    required this.subtitle,
+    this.classroomLink,
+  });
+
+  Future<void> _abrirClassroom() async {
+    final link = classroomLink;
+    if (link == null) return;
+    final uri = Uri.tryParse(link);
+    if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final tieneLink = classroomLink != null;
     return Container(
-      height: 62,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
+      padding: const EdgeInsets.fromLTRB(12, 13, 9, 9),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 22,
-            height: 22,
-            decoration: const BoxDecoration(
-              color: _kTaskIconBg,
-              shape: BoxShape.circle,
-            ),
-            child: SvgPicture.string(
-              _kSvgChecklist,
-              width: 14,
-              height: 14,
-              colorFilter: const ColorFilter.mode(_kTaskAmber, BlendMode.srcIn),
-            ),
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: const BoxDecoration(
+                  color: _kPrimaryLt,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: SvgPicture.string(
+                  _kSvgClipboardList,
+                  width: 20,
+                  height: 21,
+                  colorFilter: const ColorFilter.mode(_kPrimary, BlendMode.srcIn),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: _kBack,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(fontSize: 11, color: _kGray),
+                    ),
+                  ],
+                ),
+              ),
+              if (!tieneLink)
+                const Text('›',
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: _kPrimary)),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: _kTextDark,
+          if (tieneLink) ...[
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: _abrirClassroom,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Image.asset(
+                    'assets/icons/google_classroom_icon.png',
+                    width: 17,
+                    height: 17,
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(fontSize: 11, color: _kTaskAmber),
-                ),
-              ],
+                  const SizedBox(width: 2),
+                  const Text(
+                    'Ver en classroom',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _kPrimary,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Text('›',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: _kPrimary)),
+                ],
+              ),
             ),
-          ),
-          const Text('›',
-              style: TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.w600, color: _kChevron)),
+          ],
         ],
       ),
     );
