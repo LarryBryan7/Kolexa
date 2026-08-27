@@ -1104,6 +1104,7 @@ export class ClassroomService {
       due_date: Date | null;
       max_points: number | null;
       work_type: string;
+      alternate_link: string | null;
       course_name: string;
       course_section: string | null;
     };
@@ -1117,7 +1118,7 @@ export class ClassroomService {
       `,
       this.prisma.$queryRaw<UpcomingRow[]>`
         SELECT cw.id, cw.course_id, cw.title, cw.description, cw.due_date, cw.max_points, cw.work_type,
-               c.name AS course_name, c.section AS course_section
+               cw.alternate_link, c.name AS course_name, c.section AS course_section
         FROM gc_coursework cw
         JOIN gc_courses c ON cw.course_id = c.id
         WHERE c.student_id = ${studentId}
@@ -1149,6 +1150,7 @@ export class ClassroomService {
       dueDate: cw.due_date,
       maxPoints: cw.max_points,
       workType: cw.work_type,
+      alternateLink: cw.alternate_link,
       course: { name: cw.course_name, section: cw.course_section },
     }));
 
@@ -1217,6 +1219,7 @@ export class ClassroomService {
       due_date: Date | null;
       max_points: number | null;
       work_type: string;
+      alternate_link: string | null;
       course_name: string;
       course_section: string | null;
     };
@@ -1231,7 +1234,7 @@ export class ClassroomService {
       this.prisma.$queryRaw<TokenRow[]>`SELECT id FROM google_tokens WHERE student_id = ${studentId} LIMIT 1`,
       this.prisma.$queryRaw<UpcomingRow[]>`
         SELECT cw.id, cw.course_id, cw.title, cw.description, cw.due_date, cw.max_points, cw.work_type,
-               c.name AS course_name, c.section AS course_section
+               cw.alternate_link, c.name AS course_name, c.section AS course_section
         FROM gc_coursework cw
         JOIN gc_courses c ON cw.course_id = c.id
         WHERE c.student_id = ${studentId}
@@ -1261,6 +1264,7 @@ export class ClassroomService {
       dueDate: cw.due_date,
       maxPoints: cw.max_points,
       workType: cw.work_type,
+      alternateLink: cw.alternate_link,
       course: { name: cw.course_name, section: cw.course_section },
     }));
 
@@ -1308,6 +1312,7 @@ export class ClassroomService {
       due_date: Date | null;
       max_points: number | null;
       work_type: string;
+      alternate_link: string | null;
       course_name: string;
       course_section: string | null;
     };
@@ -1340,7 +1345,7 @@ export class ClassroomService {
 
       const upcoming = await tx.$queryRaw<UpcomingRow[]>`
         SELECT cw.id, cw.course_id, cw.title, cw.description, cw.due_date, cw.max_points, cw.work_type,
-               c.name AS course_name, c.section AS course_section
+               cw.alternate_link, c.name AS course_name, c.section AS course_section
         FROM gc_coursework cw
         JOIN gc_courses c ON cw.course_id = c.id
         WHERE c.student_id = ${studentId}
@@ -1418,6 +1423,7 @@ export class ClassroomService {
           dueDate: cw.due_date,
           maxPoints: cw.max_points,
           workType: cw.work_type,
+          alternateLink: cw.alternate_link,
           course: { name: cw.course_name, section: cw.course_section },
         }))
       : [];

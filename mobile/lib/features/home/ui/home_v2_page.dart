@@ -593,6 +593,22 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
                                     cw.dueDate != null &&
                                     limaDay(cw.dueDate!) == limaToday())
                                 .toList(),
+                            // Resto de la semana (sin contar hoy) — mismo
+                            // criterio que la tarjeta "Esta semana".
+                            weekCount: (_parentHome?.upcomingStatus.upcoming ?? [])
+                                .where((cw) {
+                              if (cw.dueDate == null) return false;
+                              final today = limaToday();
+                              final weekStart =
+                                  today.subtract(Duration(days: today.weekday - 1));
+                              final weekEnd = weekStart.add(const Duration(
+                                  days: 6, hours: 23, minutes: 59, seconds: 59));
+                              final restOfWeekStart =
+                                  today.add(const Duration(days: 1));
+                              final d = limaDay(cw.dueDate!);
+                              return !d.isBefore(restOfWeekStart) &&
+                                  !d.isAfter(weekEnd);
+                            }).length,
                             studentName: children[safeIndex].fullName,
                           ),
                           const SizedBox(height: 12),
@@ -1840,10 +1856,12 @@ class _PendienteRow extends StatelessWidget {
 // ─────────────────────────────────────────────────────────
 class _UrgentCard extends StatelessWidget {
   final List<GcCoursework> tasksToday;
+  final int weekCount;
   final String studentName;
 
   const _UrgentCard({
     required this.tasksToday,
+    required this.weekCount,
     required this.studentName,
   });
 
@@ -1855,6 +1873,7 @@ class _UrgentCard extends StatelessWidget {
           builder: (_) => PendientesPage(
             studentName: studentName,
             todayTasks: tasksToday,
+            weekCount: weekCount,
           ),
         ),
       ),
