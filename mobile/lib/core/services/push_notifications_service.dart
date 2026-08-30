@@ -40,10 +40,22 @@ class PushNotificationsService {
   // Callback para reenviar el token al backend cuando Firebase lo rota
   Function(String token)? onTokenRefresh;
 
-  // Callback que se dispara cuando llega un mensaje de datos (data message)
-  // con el flag `refresh: true`. Se usa para refrescar la pantalla en tiempo
-  // real (ej. home padre) sin mostrar una notificación visible.
-  Function()? onDataRefresh;
+  // Se dispara cuando llega un mensaje de datos (data message) con el flag
+  // `refresh: true`. Se usa para refrescar una pantalla "en tiempo real"
+  // (home padre, bandeja de chats, una conversación abierta) sin mostrar
+  // una notificación visible. Es una LISTA porque más de una pantalla
+  // puede estar escuchando a la vez (ej. el home sigue montado atrás
+  // mientras hay una conversación abierta encima) — un callback único
+  // hacía que una pantalla se "robara" el aviso de otra al suscribirse.
+  final List<void Function(Map<String, dynamic> data)> _dataRefreshListeners = [];
+
+  void addDataRefreshListener(void Function(Map<String, dynamic> data) listener) {
+    _dataRefreshListeners.add(listener);
+  }
+
+  void removeDataRefreshListener(void Function(Map<String, dynamic> data) listener) {
+    _dataRefreshListeners.remove(listener);
+  }
 
   Future<void> initialize() async {
     // Registrar handler para cuando la app está en background/terminated
@@ -128,7 +140,11 @@ class PushNotificationsService {
     // SIN interrumpir el flujo. Después seguimos y mostramos la notificación
     // visible normalmente (igual que WhatsApp: notifica Y actualiza).
     if (message.data['refresh'] == 'true') {
-      onDataRefresh?.call();
+      // Copia de la lista: un listener podría des-suscribirse a sí mismo
+      // durante la iteración (ej. un dispose que corre en el mismo tick).
+      for (final listener in List.of(_dataRefreshListeners)) {
+        listener(message.data);
+      }
     }
 
     final notif = message.notification;

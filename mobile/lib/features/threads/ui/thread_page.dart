@@ -16,6 +16,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/services/manufacturer_settings_service.dart';
+import '../../../core/services/push_notifications_service.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
 import '../../homework/bloc/homework_bloc.dart';
@@ -55,7 +56,7 @@ class ThreadPage extends StatefulWidget {
   State<ThreadPage> createState() => _ThreadPageState();
 }
 
-class _ThreadPageState extends State<ThreadPage> {
+class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   late final ThreadsRepository _repo;
   late final int _myUserId;
   late final List<String> _myRoles;
@@ -82,6 +83,25 @@ class _ThreadPageState extends State<ThreadPage> {
     // Se marca leído al entrar: si el otro responde mientras se lee, el
     // siguiente refresh de la bandeja ya no lo mostrará como pendiente.
     _repo.markRead(widget.threadId).catchError((_) {});
+    WidgetsBinding.instance.addObserver(this);
+    PushNotificationsService.instance.addDataRefreshListener(_handleDataRefresh);
+  }
+
+  // Push de un mensaje nuevo en ESTA conversación → se refresca sola. Se
+  // filtra por threadId para no recargar cuando llega un mensaje de otra
+  // conversación distinta que el usuario no tiene abierta.
+  void _handleDataRefresh(Map<String, dynamic> data) {
+    if (!mounted) return;
+    if (data['screen'] == 'thread' && data['threadId'] == widget.threadId) {
+      _load();
+    }
+  }
+
+  // Red de seguridad si el push no llegó (conocido en gama baja/media):
+  // al volver del background, se refresca igual.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
   }
 
   void _load() {
@@ -228,6 +248,8 @@ class _ThreadPageState extends State<ThreadPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    PushNotificationsService.instance.removeDataRefreshListener(_handleDataRefresh);
     _mentionDebounce?.cancel();
     _controller.dispose();
     _scroll.dispose();

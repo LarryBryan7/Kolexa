@@ -630,6 +630,10 @@ export class ThreadsService {
         .sendToUser(p.userId, title, preview, {
           screen: 'thread',
           threadId: threadId.toString(),
+          // Señal para refrescar la conversación/bandeja sola si la
+          // pantalla ya está abierta — mismo patrón que asistencia/fotos,
+          // no trae el mensaje en sí, solo avisa "volvé a pedir".
+          refresh: 'true',
         })
         .catch(() => {});
     }
