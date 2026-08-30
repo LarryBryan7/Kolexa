@@ -1,0 +1,495 @@
+// ============================================================
+// thread_page.dart — Una conversación
+// ============================================================
+// Soporta menciones de tareas con "@": al escribir @ se busca entre las
+// tareas del aula del alumno de este hilo (mismo criterio de permisos que
+// ya aplica el backend) y, al elegir una, queda como un chip tocable dentro
+// del mensaje que lleva directo a esa tarea — ver conversación sobre
+// "@tarea_mañana" del 30-08-2026.
+// ============================================================
+
+import 'dart:async';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../core/api/api_client.dart';
+import '../../../core/services/manufacturer_settings_service.dart';
+import '../../auth/bloc/auth_bloc.dart';
+import '../../auth/bloc/auth_state.dart';
+import '../../homework/bloc/homework_bloc.dart';
+import '../../homework/data/datasources/homework_remote_datasource.dart';
+import '../../homework/data/repositories/homework_repository.dart';
+import '../../homework/ui/homework_page.dart';
+import '../data/threads_repository.dart';
+
+const _kBg = Color(0xFFF7F6F3);
+const _kPrimary = Color(0xFF5B4A9E);
+const _kPrimaryLt = Color(0xFFEDE8FA);
+const _kTextDark = Color(0xFF1E1B29);
+const _kTextGray = Color(0xFF666666);
+
+// "@[Título](homework:123)" para tareas institucionales o
+// "@[Título](gc-coursework:456)" para tareas sincronizadas de Google
+// Classroom — texto plano dentro de body, no una tabla aparte. El título
+// queda fijo tal como se vio al escribir; el enlace navega por id, así que
+// si la tarea cambia (fecha, entregada) el destino sigue siendo el actual.
+final RegExp _mentionRe = RegExp(r'@\[(.*?)\]\((homework|gc-coursework):(\d+)\)');
+
+class ThreadPage extends StatefulWidget {
+  final String threadId;
+  final String title;
+  final String? studentId;
+  final String? studentName;
+
+  const ThreadPage({
+    super.key,
+    required this.threadId,
+    required this.title,
+    this.studentId,
+    this.studentName,
+  });
+
+  @override
+  State<ThreadPage> createState() => _ThreadPageState();
+}
+
+class _ThreadPageState extends State<ThreadPage> {
+  late final ThreadsRepository _repo;
+  late final int _myUserId;
+  late final List<String> _myRoles;
+  final _controller = TextEditingController();
+  final _scroll = ScrollController();
+  Future<List<ThreadMessage>>? _future;
+  bool _sending = false;
+  String? _error;
+
+  // ── Autocompletado de "@" ──────────────────────────────────
+  Timer? _mentionDebounce;
+  int? _mentionStart; // índice del "@" que disparó la búsqueda actual
+  List<MentionCandidate>? _mentionResults;
+
+  @override
+  void initState() {
+    super.initState();
+    _repo = ThreadsRepository(context.read<ApiClient>());
+    final authState = context.read<AuthBloc>().state;
+    _myUserId = authState is AuthAuthenticated ? authState.user.id : -1;
+    _myRoles = authState is AuthAuthenticated ? authState.user.roles : const [];
+    _controller.addListener(_onTextChanged);
+    _load();
+    // Se marca leído al entrar: si el otro responde mientras se lee, el
+    // siguiente refresh de la bandeja ya no lo mostrará como pendiente.
+    _repo.markRead(widget.threadId).catchError((_) {});
+  }
+
+  void _load() {
+    setState(() {
+      _error = null;
+      _future = _repo.getMessages(widget.threadId).then((msgs) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+        return msgs;
+      });
+    });
+  }
+
+  void _scrollToBottom() {
+    if (!_scroll.hasClients) return;
+    _scroll.animateTo(
+      _scroll.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  // Detecta si el cursor está justo después de un "@" sin espacios de por
+  // medio (ej. "hola @tar|" sí, "hola @tar |" no) y dispara la búsqueda.
+  void _onTextChanged() {
+    final text = _controller.text;
+    final cursor = _controller.selection.baseOffset;
+    if (cursor < 0) return _clearMentions();
+
+    final upToCursor = text.substring(0, cursor);
+    final at = upToCursor.lastIndexOf('@');
+    if (at == -1 || upToCursor.substring(at + 1).contains(RegExp(r'[\s\]]'))) {
+      return _clearMentions();
+    }
+
+    final query = upToCursor.substring(at + 1);
+    _mentionStart = at;
+    _mentionDebounce?.cancel();
+    _mentionDebounce = Timer(const Duration(milliseconds: 250), () async {
+      try {
+        final results = await _repo.searchMentions(widget.threadId, query);
+        if (mounted && _mentionStart == at) setState(() => _mentionResults = results);
+      } catch (_) {
+        // Sin conexión momentánea: no interrumpe la escritura, solo no
+        // aparecen sugerencias esta vez.
+      }
+    });
+  }
+
+  void _clearMentions() {
+    if (_mentionStart == null && _mentionResults == null) return;
+    _mentionDebounce?.cancel();
+    setState(() {
+      _mentionStart = null;
+      _mentionResults = null;
+    });
+  }
+
+  void _insertMention(MentionCandidate c) {
+    final start = _mentionStart;
+    if (start == null) return;
+    final text = _controller.text;
+    final cursor = _controller.selection.baseOffset;
+    final replacement = '@[${c.title}](${c.type}:${c.id}) ';
+    final newText = text.replaceRange(start, cursor, replacement);
+    _controller.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: start + replacement.length),
+    );
+    _clearMentions();
+  }
+
+  void _openMention(String type, String refId) {
+    if (type == 'gc-coursework') {
+      _openClassroomTask(refId);
+    } else {
+      _openHomework(refId);
+    }
+  }
+
+  // Solo un padre puede abrir la tarea de su hijo (el backend exige ser su
+  // tutor). Si quien mencionó es el propio docente, se le avisa dónde verla
+  // en vez de navegar a una pantalla que le devolvería un error de permiso.
+  void _openHomework(String homeworkId) {
+    if (!_myRoles.contains('parent') || widget.studentId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Puedes verla en la sección de Tareas de esa aula.')),
+      );
+      return;
+    }
+    final api = context.read<ApiClient>();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider(
+          create: (_) => HomeworkBloc(HomeworkRepository(HomeworkRemoteDataSource(api))),
+          child: HomeworkParentPage(
+            studentId: int.parse(widget.studentId!),
+            studentName: widget.studentName ?? '',
+            highlightHomeworkId: int.parse(homeworkId),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // La tarea de Classroom no tiene pantalla propia dentro de KOLEXA — el
+  // mensaje solo guardó id + título, así que el link real se resuelve acá
+  // (validado por participación en el hilo) y se abre igual que el botón
+  // "Ver en classroom" del resto de la app.
+  Future<void> _openClassroomTask(String refId) async {
+    String? link;
+    try {
+      link = await _repo.getClassroomTaskLink(widget.threadId, refId);
+    } catch (_) {
+      link = null;
+    }
+    if (link == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir esta tarea de Classroom.')),
+      );
+      return;
+    }
+    final openedNative = await ManufacturerSettingsService.instance.openExternalUrl(link);
+    if (openedNative) return;
+    final uri = Uri.tryParse(link);
+    if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _send() async {
+    final body = _controller.text.trim();
+    if (body.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    try {
+      await _repo.sendMessage(widget.threadId, body);
+      _controller.clear();
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _mentionDebounce?.cancel();
+    _controller.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _kBg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 16, 12),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: _kTextDark),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 17, fontWeight: FontWeight.w700, color: _kTextDark)),
+                        if (widget.studentName != null)
+                          Text('Sobre ${widget.studentName}',
+                              style: const TextStyle(fontSize: 12, color: _kPrimary)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: FutureBuilder<List<ThreadMessage>>(
+                future: _future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator(color: _kPrimary));
+                  }
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: TextButton(onPressed: _load, child: const Text('Reintentar')),
+                    );
+                  }
+                  final messages = snapshot.data ?? [];
+                  if (messages.isEmpty) {
+                    return const Center(
+                      child: Text('Escribe el primer mensaje',
+                          style: TextStyle(color: _kTextGray)),
+                    );
+                  }
+                  return ListView.builder(
+                    controller: _scroll,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    itemCount: messages.length,
+                    itemBuilder: (context, i) => _Bubble(
+                      message: messages[i],
+                      isMine: messages[i].senderId == _myUserId.toString(),
+                      onOpenMention: _openMention,
+                    ),
+                  );
+                },
+              ),
+            ),
+            if (_mentionResults != null) _MentionSuggestions(results: _mentionResults!, onPick: _insertMention),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(_error!, style: const TextStyle(color: Color(0xFFBA3428), fontSize: 12)),
+              ),
+            _Composer(controller: _controller, sending: _sending, onSend: _send),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MentionSuggestions extends StatelessWidget {
+  final List<MentionCandidate> results;
+  final ValueChanged<MentionCandidate> onPick;
+  const _MentionSuggestions({required this.results, required this.onPick});
+
+  @override
+  Widget build(BuildContext context) {
+    if (results.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        color: Colors.white,
+        child: const Text('No hay tareas que coincidan', style: TextStyle(fontSize: 12, color: _kTextGray)),
+      );
+    }
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 200),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Color(0xFFEEEEEE))),
+      ),
+      child: ListView.builder(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        itemCount: results.length,
+        itemBuilder: (context, i) {
+          final c = results[i];
+          return ListTile(
+            dense: true,
+            leading: Icon(
+              c.type == 'gc-coursework' ? Icons.school_outlined : Icons.assignment_outlined,
+              color: _kPrimary,
+              size: 20,
+            ),
+            title: Text(c.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              c.dueDate != null
+                  ? '${c.courseName} · vence ${DateFormat('d MMM', 'es').format(c.dueDate!)}'
+                  : c.courseName,
+              style: const TextStyle(fontSize: 11),
+            ),
+            onTap: () => onPick(c),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _Bubble extends StatelessWidget {
+  final ThreadMessage message;
+  final bool isMine;
+  final void Function(String type, String refId) onOpenMention;
+  const _Bubble({required this.message, required this.isMine, required this.onOpenMention});
+
+  String _time(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+  // Convierte "...@[Título](homework:123)..." (o "gc-coursework:") en
+  // spans: texto normal + un span tocable por cada mención, subrayado y
+  // con ícono de tarea.
+  List<InlineSpan> _buildSpans(BuildContext context) {
+    final body = message.body;
+    final baseColor = isMine ? Colors.white : _kTextDark;
+    final mentionColor = isMine ? Colors.white : _kPrimary;
+    final spans = <InlineSpan>[];
+    int last = 0;
+    for (final m in _mentionRe.allMatches(body)) {
+      if (m.start > last) {
+        spans.add(TextSpan(text: body.substring(last, m.start)));
+      }
+      final title = m.group(1)!;
+      final type = m.group(2)!;
+      final refId = m.group(3)!;
+      spans.add(TextSpan(
+        text: '📋 $title',
+        style: TextStyle(
+          color: mentionColor,
+          fontWeight: FontWeight.w700,
+          decoration: TextDecoration.underline,
+          decorationColor: mentionColor,
+        ),
+        recognizer: TapGestureRecognizer()..onTap = () => onOpenMention(type, refId),
+      ));
+      last = m.end;
+    }
+    if (last < body.length) spans.add(TextSpan(text: body.substring(last)));
+    return [TextSpan(style: TextStyle(color: baseColor, fontSize: 14.5, height: 1.3), children: spans)];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: isMine ? _kPrimary : Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(14),
+            topRight: const Radius.circular(14),
+            bottomLeft: Radius.circular(isMine ? 14 : 4),
+            bottomRight: Radius.circular(isMine ? 4 : 14),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text.rich(TextSpan(children: _buildSpans(context))),
+            const SizedBox(height: 4),
+            Text(_time(message.sentAt),
+                style: TextStyle(
+                    fontSize: 10,
+                    color: isMine ? Colors.white.withValues(alpha: 0.7) : _kTextGray)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Composer extends StatelessWidget {
+  final TextEditingController controller;
+  final bool sending;
+  final VoidCallback onSend;
+  const _Composer({required this.controller, required this.sending, required this.onSend});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Color(0xFFEEEEEE))),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                minLines: 1,
+                maxLines: 4,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: InputDecoration(
+                  hintText: 'Escribe un mensaje… usa @ para mencionar una tarea',
+                  filled: true,
+                  fillColor: _kPrimaryLt.withValues(alpha: 0.4),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onSubmitted: (_) => onSend(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            sending
+                ? const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: SizedBox(
+                        width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                : IconButton(
+                    onPressed: onSend,
+                    icon: const Icon(Icons.send_rounded, color: _kPrimary),
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+}

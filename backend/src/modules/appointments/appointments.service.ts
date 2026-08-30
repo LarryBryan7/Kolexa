@@ -123,16 +123,23 @@ export class AppointmentsService {
     },
     parentId: bigint,
   ) {
-    const rel = await this.prisma.userStudent.findFirst({
-      where: { userId: parentId, studentId: data.studentId },
-    });
+    // Las tres validaciones usan solo los datos de entrada (slotId,
+    // studentId, parentId) — ninguna depende del resultado de otra.
+    const [rel, slot, alreadyBooked] = await Promise.all([
+      this.prisma.userStudent.findFirst({
+        where: { userId: parentId, studentId: data.studentId },
+      }),
+      // Verificar que el slot existe y está disponible
+      this.prisma.appointmentSlot.findUnique({
+        where: { id: data.slotId },
+        include: { _count: { select: { appointments: true } } },
+      }),
+      // Verificar que el padre no ya tiene una cita en este slot
+      this.prisma.appointment.findFirst({
+        where: { slotId: data.slotId, parentId },
+      }),
+    ]);
     if (!rel) throw new ForbiddenException('No tienes acceso a este alumno');
-
-    // Verificar que el slot existe y está disponible
-    const slot = await this.prisma.appointmentSlot.findUnique({
-      where: { id: data.slotId },
-      include: { _count: { select: { appointments: true } } },
-    });
 
     if (!slot) throw new NotFoundException('Slot no encontrado');
     if (!slot.isAvailable) throw new ConflictException('Este horario ya no está disponible');
@@ -142,10 +149,6 @@ export class AppointmentsService {
       throw new ConflictException('Este horario ya está lleno');
     }
 
-    // Verificar que el padre no ya tiene una cita en este slot
-    const alreadyBooked = await this.prisma.appointment.findFirst({
-      where: { slotId: data.slotId, parentId },
-    });
     if (alreadyBooked) {
       throw new ConflictException('Ya tienes una cita reservada en este horario');
     }

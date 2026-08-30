@@ -477,20 +477,22 @@ export class AdminService {
   // ─────────────────────────────────────────────────────────
 
   async createEnrollment(schoolId: bigint, dto: CreateEnrollmentDto) {
-    // Verificar que el alumno pertenezca al colegio
-    await this.getStudentOwned(schoolId, BigInt(dto.studentId));
-    // Verificar que el aula pertenezca al colegio
-    await this.getClassroomOwned(schoolId, BigInt(dto.classroomId));
-
-    // Evitar matrícula duplicada (constraint @@unique([studentId, classroomId, academicYear]))
-    const dup = await this.prisma.studentEnrollment.findFirst({
-      where: {
-        studentId: BigInt(dto.studentId),
-        classroomId: BigInt(dto.classroomId),
-        academicYear: dto.academicYear,
-      },
-      select: { id: true },
-    });
+    // Las tres validaciones son independientes entre sí — corren en paralelo.
+    const [, , dup] = await Promise.all([
+      // Verificar que el alumno pertenezca al colegio
+      this.getStudentOwned(schoolId, BigInt(dto.studentId)),
+      // Verificar que el aula pertenezca al colegio
+      this.getClassroomOwned(schoolId, BigInt(dto.classroomId)),
+      // Evitar matrícula duplicada (constraint @@unique([studentId, classroomId, academicYear]))
+      this.prisma.studentEnrollment.findFirst({
+        where: {
+          studentId: BigInt(dto.studentId),
+          classroomId: BigInt(dto.classroomId),
+          academicYear: dto.academicYear,
+        },
+        select: { id: true },
+      }),
+    ]);
     if (dup) {
       throw new ConflictException('El alumno ya está matriculado en este aula para ese año');
     }
@@ -528,32 +530,33 @@ export class AdminService {
   // ─────────────────────────────────────────────────────────
 
   async createParentLink(schoolId: bigint, dto: CreateParentLinkDto) {
-    // Verificar que el alumno pertenezca al colegio
-    await this.getStudentOwned(schoolId, BigInt(dto.studentId));
-
-    // Verificar que el usuario tenga rol 'parent' en este colegio
-    const parent = await this.prisma.userRole.findFirst({
-      where: {
-        userId: BigInt(dto.userId),
-        schoolId,
-        role: { name: 'parent' },
-      },
-      select: { id: true },
-    });
+    // Las tres son independientes entre sí — corren en paralelo.
+    const [, parent, dup] = await Promise.all([
+      // Verificar que el alumno pertenezca al colegio
+      this.getStudentOwned(schoolId, BigInt(dto.studentId)),
+      // Verificar que el usuario tenga rol 'parent' en este colegio
+      this.prisma.userRole.findFirst({
+        where: {
+          userId: BigInt(dto.userId),
+          schoolId,
+          role: { name: 'parent' },
+        },
+        select: { id: true },
+      }),
+      // Evitar vínculo duplicado (constraint @@unique([userId, studentId]))
+      this.prisma.userStudent.findFirst({
+        where: {
+          userId: BigInt(dto.userId),
+          studentId: BigInt(dto.studentId),
+        },
+        select: { id: true },
+      }),
+    ]);
     if (!parent) {
       throw new BadRequestException(
         'El usuario no tiene rol de padre en este colegio',
       );
     }
-
-    // Evitar vínculo duplicado (constraint @@unique([userId, studentId]))
-    const dup = await this.prisma.userStudent.findFirst({
-      where: {
-        userId: BigInt(dto.userId),
-        studentId: BigInt(dto.studentId),
-      },
-      select: { id: true },
-    });
     if (dup) {
       throw new ConflictException('El padre ya está vinculado a este alumno');
     }
@@ -714,20 +717,24 @@ export class AdminService {
   // (tx.parent.findUnique) justo antes de decidir, nunca desde un valor
   // capturado fuera de la transacción.
   async createParentStudentLink(schoolId: bigint, dto: CreateParentStudentLinkDto) {
-    // Verificar que el padre pertenezca al colegio (solo existencia/
-    // ownership — el userId de este objeto NO se usa para el bridge).
-    await this.getParentOwned(schoolId, BigInt(dto.parentId));
-    // Verificar que el alumno pertenezca al colegio
-    await this.getStudentOwned(schoolId, BigInt(dto.studentId));
-
-    // Evitar vínculo duplicado (constraint @@unique([parentId, studentId]))
-    const dup = await this.prisma.parentStudent.findFirst({
-      where: {
-        parentId: BigInt(dto.parentId),
-        studentId: BigInt(dto.studentId),
-      },
-      select: { id: true },
-    });
+    // Las tres son independientes entre sí — corren en paralelo. Ninguna
+    // captura un valor que se use más adelante (ver comentario del hallazgo
+    // IM-8 arriba): el bridge relee todo fresco dentro de la transacción.
+    const [, , dup] = await Promise.all([
+      // Verificar que el padre pertenezca al colegio (solo existencia/
+      // ownership — el userId de este objeto NO se usa para el bridge).
+      this.getParentOwned(schoolId, BigInt(dto.parentId)),
+      // Verificar que el alumno pertenezca al colegio
+      this.getStudentOwned(schoolId, BigInt(dto.studentId)),
+      // Evitar vínculo duplicado (constraint @@unique([parentId, studentId]))
+      this.prisma.parentStudent.findFirst({
+        where: {
+          parentId: BigInt(dto.parentId),
+          studentId: BigInt(dto.studentId),
+        },
+        select: { id: true },
+      }),
+    ]);
     if (dup) {
       throw new ConflictException('El padre ya está vinculado a este alumno');
     }
@@ -809,36 +816,38 @@ export class AdminService {
   // ─────────────────────────────────────────────────────────
 
   async createAssignment(schoolId: bigint, dto: CreateAssignmentDto) {
-    // Verificar que el aula pertenezca al colegio
-    await this.getClassroomOwned(schoolId, BigInt(dto.classroomId));
-    // Verificar que el curso pertenezca al colegio
-    await this.getCourseOwned(schoolId, BigInt(dto.courseId));
-
-    // Si se asigna docente, verificar que tenga rol 'teacher' en este colegio
-    if (dto.teacherId) {
-      const teacher = await this.prisma.userRole.findFirst({
+    // Las cuatro validaciones son independientes entre sí — corren en
+    // paralelo en vez de una tras otra.
+    const [, , teacher, dup] = await Promise.all([
+      // Verificar que el aula pertenezca al colegio
+      this.getClassroomOwned(schoolId, BigInt(dto.classroomId)),
+      // Verificar que el curso pertenezca al colegio
+      this.getCourseOwned(schoolId, BigInt(dto.courseId)),
+      // Si se asigna docente, verificar que tenga rol 'teacher' en este colegio
+      dto.teacherId
+        ? this.prisma.userRole.findFirst({
+            where: {
+              userId: BigInt(dto.teacherId),
+              schoolId,
+              role: { name: 'teacher' },
+            },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+      // Evitar asignación duplicada (constraint @@unique([classroomId, courseId]))
+      this.prisma.classroomCourse.findFirst({
         where: {
-          userId: BigInt(dto.teacherId),
-          schoolId,
-          role: { name: 'teacher' },
+          classroomId: BigInt(dto.classroomId),
+          courseId: BigInt(dto.courseId),
         },
         select: { id: true },
-      });
-      if (!teacher) {
-        throw new BadRequestException(
-          'El usuario no tiene rol de docente en este colegio',
-        );
-      }
+      }),
+    ]);
+    if (dto.teacherId && !teacher) {
+      throw new BadRequestException(
+        'El usuario no tiene rol de docente en este colegio',
+      );
     }
-
-    // Evitar asignación duplicada (constraint @@unique([classroomId, courseId]))
-    const dup = await this.prisma.classroomCourse.findFirst({
-      where: {
-        classroomId: BigInt(dto.classroomId),
-        courseId: BigInt(dto.courseId),
-      },
-      select: { id: true },
-    });
     if (dup) {
       throw new ConflictException('Este curso ya está asignado a este aula');
     }

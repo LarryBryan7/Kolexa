@@ -4,8 +4,11 @@ import '../../../core/api/api_client.dart';
 class TeacherClassroom {
   final int id;
   final String name;
-  final String grade;
-  final String section;
+  // grade y section son nullable en la base: un aula creada desde la
+  // importación de Classroom solo trae el nombre ("1ro B"). Tiparlos como
+  // String no-nulo hacía que el home del docente crasheara al parsear.
+  final String? grade;
+  final String? section;
   final int studentCount;
 
   const TeacherClassroom({
@@ -20,9 +23,9 @@ class TeacherClassroom {
     return TeacherClassroom(
       id: json['id'] as int,
       name: json['name'] as String,
-      grade: json['grade'] as String,
-      section: json['section'] as String,
-      studentCount: json['studentCount'] as int,
+      grade: json['grade'] as String?,
+      section: json['section'] as String?,
+      studentCount: json['studentCount'] as int? ?? 0,
     );
   }
 }

@@ -33,16 +33,21 @@ export class PickupService {
   // studentId/rol enviado por el cliente más allá de resolverlo contra
   // las relaciones reales en BD.
   private async assertParentOrStaffAccess(userId: bigint, studentId: number): Promise<void> {
-    const student = await this.prisma.student.findUnique({
-      where: { id: studentId },
-      select: { schoolId: true },
-    });
+    // `isParent` no depende del `student` (solo de userId+studentId) —
+    // corren en paralelo. `isStaff` sí depende de `student.schoolId`, así
+    // que queda después, y solo se consulta si hace falta (isParent ya
+    // cubre el caso más común).
+    const [student, isParent] = await Promise.all([
+      this.prisma.student.findUnique({
+        where: { id: studentId },
+        select: { schoolId: true },
+      }),
+      this.prisma.userStudent.findFirst({
+        where: { userId, studentId },
+        select: { id: true },
+      }),
+    ]);
     if (!student) throw new NotFoundException('Alumno no encontrado');
-
-    const isParent = await this.prisma.userStudent.findFirst({
-      where: { userId, studentId },
-      select: { id: true },
-    });
     if (isParent) return;
 
     const isStaff = await this.prisma.userRole.findFirst({

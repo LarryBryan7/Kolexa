@@ -65,8 +65,8 @@ const AUTOINCREMENT_TABLES = [
   'announcements',
   'appointment_slots',
   'appointments',
-  'messages',
-  'message_recipients',
+  'threads',
+  'thread_messages',
   'authorized_pickups',
   'pickup_events',
   'grade_periods',
@@ -74,8 +74,6 @@ const AUTOINCREMENT_TABLES = [
   'payment_concepts',
   'payment_obligations',
   'payments',
-  'conversations',
-  'chat_messages',
   'suggestions',
   'suggestion_responses',
   'discount_campaigns',
@@ -795,35 +793,37 @@ async function main() {
   ]);
   console.log('  ✓ 3 anécdotas (académica, conducta, reconocimiento)\n');
 
-  // ── 16. MENSAJES DIRECTOS ────────────────────────────────────
-  console.log('✉️ Creando mensajes directos...');
-  const msg1 = await prisma.message.create({
+  // ── 16. MENSAJERÍA (hilos) ───────────────────────────────────
+  console.log('✉️ Creando hilo de mensajería...');
+  const thread1 = await prisma.thread.create({
     data: {
-      senderId: padreRosa.id,
+      schoolId: school.id,
+      kind: 'direct',
       subject: 'Consulta sobre las tareas de Juan',
-      body: 'Buenos días Profesora María,\n\nLe escribo porque Juan me comentó que no entendió bien el tema de fracciones mixtas. ¿Podría recomendarme algún material de apoyo para trabajar en casa?\n\nMuchas gracias,\nRosa Quispe',
       studentId: alumnoJuan.id,
-      sentAt: new Date(),
+      lastMessageAt: new Date(),
+      participants: {
+        createMany: {
+          data: [{ userId: padreRosa.id }, { userId: profMaria.id }],
+        },
+      },
     },
   });
-  await prisma.messageRecipient.create({
-    data: { messageId: msg1.id, recipientId: profMaria.id, isRead: false },
-  });
-
-  const msg2 = await prisma.message.create({
+  await prisma.threadMessage.create({
     data: {
-      senderId: profMaria.id,
-      subject: 'Re: Consulta sobre las tareas de Juan',
-      body: 'Buenos días Sra. Rosa,\n\nMuchas gracias por comunicarse. Le recomiendo el canal de YouTube "Matemáticas con Andrés" donde hay videos muy claros sobre fracciones.\n\nTambién pueden practicar con el libro de ejercicios, páginas 45-52.\n\nEste jueves también hay evaluación, recuérdele a Juan que repase.\n\nSaludos,\nProf. María Rodríguez',
-      studentId: alumnoJuan.id,
-      parentMessageId: msg1.id,
-      sentAt: new Date(),
+      threadId: thread1.id,
+      senderId: padreRosa.id,
+      body: 'Buenos días Profesora María,\n\nLe escribo porque Juan me comentó que no entendió bien el tema de fracciones mixtas. ¿Podría recomendarme algún material de apoyo para trabajar en casa?\n\nMuchas gracias,\nRosa Quispe',
     },
   });
-  await prisma.messageRecipient.create({
-    data: { messageId: msg2.id, recipientId: padreRosa.id, isRead: false },
+  await prisma.threadMessage.create({
+    data: {
+      threadId: thread1.id,
+      senderId: profMaria.id,
+      body: 'Buenos días Sra. Rosa,\n\nMuchas gracias por comunicarse. Le recomiendo el canal de YouTube "Matemáticas con Andrés" donde hay videos muy claros sobre fracciones.\n\nTambién pueden practicar con el libro de ejercicios, páginas 45-52.\n\nEste jueves también hay evaluación, recuérdele a Juan que repase.\n\nSaludos,\nProf. María Rodríguez',
+    },
   });
-  console.log('  ✓ Hilo de mensajes: Rosa ↔ Prof. María (sobre Juan)\n');
+  console.log('  ✓ Hilo de mensajería: Rosa ↔ Prof. María (sobre Juan)\n');
 
   // ── 17. PAGOS ─────────────────────────────────────────────────
   console.log('💰 Creando conceptos y obligaciones de pago...');
@@ -1012,37 +1012,29 @@ async function main() {
   });
   console.log('  ✓ Campaña Crisol 15% OFF | Cupón canjeado por Rosa\n');
 
-  // ── CHAT (conversaciones en tiempo real) ───────────────────────
-  console.log('💬 Creando conversaciones de chat...');
-  const chatConv = await prisma.conversation.create({
-    data: { schoolId: school.id, name: 'Rosa ↔ Prof. María', createdById: padreRosa.id },
+  // ── MENSAJERÍA: un segundo hilo, más corto ─────────────────────
+  console.log('💬 Creando un segundo hilo de mensajería...');
+  const thread2 = await prisma.thread.create({
+    data: {
+      schoolId: school.id,
+      kind: 'direct',
+      studentId: alumnoJuan.id,
+      lastMessageAt: new Date(),
+      participants: {
+        createMany: {
+          data: [{ userId: padreRosa.id }, { userId: profCarlos.id }],
+        },
+      },
+    },
   });
-  await prisma.conversationParticipant.createMany({
-    data: [
-      { conversationId: chatConv.id, userId: padreRosa.id },
-      { conversationId: chatConv.id, userId: profMaria.id },
-    ],
+  await prisma.threadMessage.create({
+    data: {
+      threadId: thread2.id,
+      senderId: profCarlos.id,
+      body: 'Sra. Rosa, le recuerdo que el próximo lunes hay evaluación de Historia del Perú.',
+    },
   });
-  await prisma.chatMessage.create({
-    data: { conversationId: chatConv.id, senderId: padreRosa.id, body: 'Hola profesora, ¿cómo está yendo Juan en clase?' },
-  });
-  await prisma.chatMessage.create({
-    data: { conversationId: chatConv.id, senderId: profMaria.id, body: 'Buenos días. Juan va muy bien, es participativo. Ayer obtuvo 17 en la evaluación.' },
-  });
-
-  const chatConv2 = await prisma.conversation.create({
-    data: { schoolId: school.id, name: 'Rosa ↔ Prof. Carlos', createdById: profCarlos.id },
-  });
-  await prisma.conversationParticipant.createMany({
-    data: [
-      { conversationId: chatConv2.id, userId: padreRosa.id },
-      { conversationId: chatConv2.id, userId: profCarlos.id },
-    ],
-  });
-  await prisma.chatMessage.create({
-    data: { conversationId: chatConv2.id, senderId: profCarlos.id, body: 'Sra. Rosa, le recuerdo que el próximo lunes hay evaluación de Historia del Perú.' },
-  });
-  console.log('  ✓ 2 conversaciones de chat (Rosa ↔ Prof. María y Prof. Carlos)\n');
+  console.log('  ✓ Hilo de mensajería: Rosa ↔ Prof. Carlos (sobre Juan)\n');
 
   // ── SINCRONIZAR SECUENCIAS AUTOINCREMENTALES ──────────────────
   await syncSequences();

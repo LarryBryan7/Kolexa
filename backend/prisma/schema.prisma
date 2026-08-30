@@ -25,10 +25,10 @@ datasource db {
 // ============================================================
 
 model Country {
-  id        Int      @id @default(autoincrement())
-  name      String   @db.VarChar(100)
-  code      String   @unique @db.Char(3)
-  regions   Region[]
+  id      Int      @id @default(autoincrement())
+  name    String   @db.VarChar(100)
+  code    String   @unique @db.Char(3)
+  regions Region[]
 
   @@map("countries")
 }
@@ -83,7 +83,7 @@ model School {
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz()
 
-  district          District?               @relation(fields: [districtId], references: [id])
+  district          District?              @relation(fields: [districtId], references: [id])
   locations         SchoolLocation[]
   courses           Course[]
   students          Student[]
@@ -99,6 +99,8 @@ model School {
   userRoles         UserRole[]
   invitations       SchoolInvitation[]
   parents           Parent[]
+  gcCourseLinks     GcCourseLink[]
+  threads           Thread[]
 
   @@map("schools")
 }
@@ -129,7 +131,7 @@ model Classroom {
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz()
 
-  schoolLocation   SchoolLocation     @relation(fields: [schoolLocationId], references: [id])
+  schoolLocation   SchoolLocation      @relation(fields: [schoolLocationId], references: [id])
   classroomCourses ClassroomCourse[]
   enrollments      StudentEnrollment[]
   userClassrooms   UserClassroom[]
@@ -185,15 +187,15 @@ model User {
   updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
   deletedAt           DateTime? @map("deleted_at") @db.Timestamptz()
 
-  district                    District?               @relation(fields: [districtId], references: [id])
+  district                    District?             @relation(fields: [districtId], references: [id])
   userRoles                   UserRole[]
   userTokens                  UserToken[]
   userStudents                UserStudent[]
   userClassrooms              UserClassroom[]
-  sentMessages                Message[]               @relation("MessageSender")
-  messageRecipients           MessageRecipient[]
+  threadParticipations        ThreadParticipant[]
+  sentThreadMessages          ThreadMessage[]
   attendancesTaken            Attendance[]
-  homeworks                   Homework[]              @relation("HomeworkTeacher")
+  homeworks                   Homework[]            @relation("HomeworkTeacher")
   anecdotes                   Anecdote[]
   announcements               Announcement[]
   appointmentSlots            AppointmentSlot[]
@@ -203,22 +205,19 @@ model User {
   suggestionResponses         SuggestionResponse[]
   suggestions                 Suggestion[]
   announcementReads           AnnouncementRead[]
-  paymentsReceived            Payment[]               @relation("PaymentReceiver")
-  conversationsCreated        Conversation[]
-  conversationParticipants    ConversationParticipant[]
-  chatMessagesSent            ChatMessage[]
+  paymentsReceived            Payment[]             @relation("PaymentReceiver")
   attachmentsUploaded         Attachment[]
   authorizedPickupsRegistered AuthorizedPickup[]
   couponRedemptions           CouponRedemption[]
   discountCampaigns           DiscountCampaign[]
   paymentConcepts             PaymentConcept[]
-  gradesGiven                 Grade[]                 @relation("GradeTeacher")
+  gradesGiven                 Grade[]               @relation("GradeTeacher")
   teacherGoogleToken          TeacherGoogleToken?
   gcTeacherCourses            GcTeacherCourse[]
-  scheduleBlocksOwned         ScheduleBlock[]         @relation("ScheduleBlockOwner")
-  gcAttendanceSessions        GcAttendanceSession[]   @relation("GcAttendanceTeacher")
+  scheduleBlocksOwned         ScheduleBlock[]       @relation("ScheduleBlockOwner")
+  gcAttendanceSessions        GcAttendanceSession[] @relation("GcAttendanceTeacher")
   pushTokens                  PushToken[]
-  invitationsSent             SchoolInvitation[]      @relation("InvitationSender")
+  invitationsSent             SchoolInvitation[]    @relation("InvitationSender")
   // parentProfiles: un User (cuenta) puede ser padre/apoderado en uno o varios
   // colegios, por lo que puede tener múltiples perfiles institucionales Parent.
   parentProfiles              Parent[]
@@ -227,14 +226,14 @@ model User {
 }
 
 model UserToken {
-  id          BigInt    @id @default(autoincrement())
-  userId      BigInt    @map("user_id")
-  tokenType   String    @map("token_type") @db.VarChar(20)
-  token       String
-  deviceInfo  Json?     @map("device_info") @db.JsonB
-  expiresAt   DateTime? @map("expires_at") @db.Timestamptz()
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
-  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz()
+  id         BigInt    @id @default(autoincrement())
+  userId     BigInt    @map("user_id")
+  tokenType  String    @map("token_type") @db.VarChar(20)
+  token      String
+  deviceInfo Json?     @map("device_info") @db.JsonB
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz()
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz()
 
   user User @relation(fields: [userId], references: [id])
 
@@ -289,7 +288,7 @@ model Student {
   authorizedPickups  AuthorizedPickup[]
   pickupEvents       PickupEvent[]
   appointments       Appointment[]
-  messages           Message[]
+  threads            Thread[]
   googleToken        GoogleToken?
   gcCourses          GcCourse[]
   gcCourseStudents   GcCourseStudent[]   @relation("GcCourseStudentLink")
@@ -372,13 +371,39 @@ model ClassroomCourse {
   courseId    BigInt  @map("course_id")
   teacherId   BigInt? @map("teacher_id")
 
-  classroom       Classroom       @relation(fields: [classroomId], references: [id])
-  course          Course          @relation(fields: [courseId], references: [id])
-  teacher         User?           @relation(fields: [teacherId], references: [id])
-  scheduleBlocks  ScheduleBlock[]
+  classroom      Classroom       @relation(fields: [classroomId], references: [id])
+  course         Course          @relation(fields: [courseId], references: [id])
+  teacher        User?           @relation(fields: [teacherId], references: [id])
+  scheduleBlocks ScheduleBlock[]
+  gcLinks        GcCourseLink[]
 
   @@unique([classroomId, courseId])
   @@map("classroom_courses")
+}
+
+// Puente entre un curso de Google Classroom y el curso institucional de KOLEXA.
+//
+// Ancla en `googleCourseId` (el id que da Google) y NO en gc_teacher_courses ni
+// gc_courses: esas dos son cachés del mismo curso vistos desde el consentimiento
+// del docente y del alumno, se borran y se re-sincronizan. El vínculo tiene que
+// sobrevivir a eso, y vale para ambos lados a la vez.
+//
+// Lo crea el administrador al confirmar la importación desde Classroom — la IA
+// y la sincronización proponen, el administrador confirma.
+model GcCourseLink {
+  id                BigInt   @id @default(autoincrement())
+  schoolId          BigInt   @map("school_id")
+  googleCourseId    String   @map("google_course_id") @db.VarChar(64)
+  classroomCourseId BigInt   @map("classroom_course_id")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  school          School          @relation(fields: [schoolId], references: [id])
+  classroomCourse ClassroomCourse @relation(fields: [classroomCourseId], references: [id], onDelete: Cascade)
+
+  // Un curso de Google apunta a un solo curso institucional dentro del colegio.
+  @@unique([schoolId, googleCourseId])
+  @@index([classroomCourseId])
+  @@map("gc_course_links")
 }
 
 // ============================================================
@@ -386,19 +411,25 @@ model ClassroomCourse {
 // ============================================================
 
 model ScheduleBlock {
-  id                  BigInt   @id @default(autoincrement())
-  classroomId         BigInt?  @map("classroom_id")
-  classroomCourseId   BigInt?  @map("classroom_course_id")
-  gcTeacherCourseId   BigInt?  @map("gc_teacher_course_id")
+  id                BigInt   @id @default(autoincrement())
+  classroomId       BigInt?  @map("classroom_id")
+  classroomCourseId BigInt?  @map("classroom_course_id")
+  gcTeacherCourseId BigInt?  @map("gc_teacher_course_id")
   // docente dueño del bloque (para bloques basados en GC)
-  ownerId             BigInt?  @map("owner_id")
-  // 'class' | 'recess' | 'break' | 'lunch'
-  type                String   @default("class") @db.VarChar(20)
+  ownerId           BigInt?  @map("owner_id")
+  // 'class' | 'recess' | 'break' | 'lunch' | 'activity'
+  // 'activity' cubre bloques no académicos con nombre propio (TUTORÍA,
+  // SALIDA, FORMACIÓN…): no tienen curso asociado, su nombre va en `label`.
+  type              String   @default("class") @db.VarChar(20)
+  // Etiqueta libre para bloques sin curso (type != 'class'). Para 'recess'/
+  // 'break'/'lunch' es opcional (ya tienen nombre por convención); para
+  // 'activity' es la única fuente del nombre visible.
+  label             String?  @db.VarChar(100)
   // dayOfWeek: 1=lunes … 5=viernes
-  dayOfWeek           Int      @map("day_of_week") @db.SmallInt
-  startTime           DateTime @map("start_time") @db.Time()
-  endTime             DateTime @map("end_time") @db.Time()
-  room                String?  @db.VarChar(100)
+  dayOfWeek         Int      @map("day_of_week") @db.SmallInt
+  startTime         DateTime @map("start_time") @db.Time()
+  endTime           DateTime @map("end_time") @db.Time()
+  room              String?  @db.VarChar(100)
 
   classroom       Classroom?       @relation(fields: [classroomId], references: [id])
   classroomCourse ClassroomCourse? @relation(fields: [classroomCourseId], references: [id])
@@ -413,14 +444,14 @@ model ScheduleBlock {
 // ============================================================
 
 model SubscriptionPlan {
-  id            Int      @id @default(autoincrement())
-  name          String   @db.VarChar(100)
-  description   String?
-  priceMonthly  Decimal? @map("price_monthly") @db.Decimal(10, 2)
-  priceYearly   Decimal? @map("price_yearly") @db.Decimal(10, 2)
-  maxStudents   Int?     @map("max_students")
-  isActive      Boolean  @default(true) @map("is_active")
-  metadata      Json     @default("{}") @db.JsonB
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(100)
+  description  String?
+  priceMonthly Decimal? @map("price_monthly") @db.Decimal(10, 2)
+  priceYearly  Decimal? @map("price_yearly") @db.Decimal(10, 2)
+  maxStudents  Int?     @map("max_students")
+  isActive     Boolean  @default(true) @map("is_active")
+  metadata     Json     @default("{}") @db.JsonB
 
   planModules   PlanModule[]
   subscriptions SchoolSubscription[]
@@ -480,12 +511,10 @@ model Attachment {
   storageProvider String   @default("supabase") @map("storage_provider") @db.VarChar(20)
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
 
-  uploader                User?                   @relation(fields: [uploaderId], references: [id])
+  uploader                User?                    @relation(fields: [uploaderId], references: [id])
   homeworkAttachments     HomeworkAttachment[]
   anecdoteAttachments     AnecdoteAttachment[]
   announcementAttachments AnnouncementAttachment[]
-  messageAttachments      MessageAttachment[]
-  chatMessages            ChatMessage[]
 
   @@map("attachments")
 }
@@ -504,9 +533,9 @@ model Attendance {
   notes       String?
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
 
-  classroom Classroom         @relation(fields: [classroomId], references: [id])
-  course    Course?           @relation(fields: [courseId], references: [id])
-  teacher   User              @relation(fields: [teacherId], references: [id])
+  classroom Classroom          @relation(fields: [classroomId], references: [id])
+  course    Course?            @relation(fields: [courseId], references: [id])
+  teacher   User               @relation(fields: [teacherId], references: [id])
   records   AttendanceRecord[]
 
   @@unique([classroomId, date])
@@ -514,15 +543,15 @@ model Attendance {
 }
 
 model AttendanceRecord {
-  id             BigInt  @id @default(autoincrement())
-  attendanceId   BigInt  @map("attendance_id")
-  studentId      BigInt  @map("student_id")
+  id            BigInt  @id @default(autoincrement())
+  attendanceId  BigInt  @map("attendance_id")
+  studentId     BigInt  @map("student_id")
   // 'present', 'absent', 'late', 'justified'
-  status         String  @default("present") @db.VarChar(20)
+  status        String  @default("present") @db.VarChar(20)
   // lateMinutes: minutos de tardanza (si status = 'late')
-  lateMinutes    Int?    @map("late_minutes")
-  justification  String?
-  observation    String?
+  lateMinutes   Int?    @map("late_minutes")
+  justification String?
+  observation   String?
 
   attendance Attendance @relation(fields: [attendanceId], references: [id])
   student    Student    @relation(fields: [studentId], references: [id])
@@ -536,22 +565,22 @@ model AttendanceRecord {
 // ============================================================
 
 model Homework {
-  id             BigInt    @id @default(autoincrement())
-  classroomId    BigInt    @map("classroom_id")
-  courseId       BigInt    @map("course_id")
-  teacherId      BigInt    @map("teacher_id")
-  title          String    @db.VarChar(500)
-  description    String?
-  dueDate        DateTime? @map("due_date") @db.Date
+  id            BigInt    @id @default(autoincrement())
+  classroomId   BigInt    @map("classroom_id")
+  courseId      BigInt    @map("course_id")
+  teacherId     BigInt    @map("teacher_id")
+  title         String    @db.VarChar(500)
+  description   String?
+  dueDate       DateTime? @map("due_date") @db.Date
   // notifyParents: si se envía notificación push a los padres al crear
-  notifyParents  Boolean   @default(true) @map("notify_parents")
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz()
+  notifyParents Boolean   @default(true) @map("notify_parents")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz()
 
-  classroom   Classroom          @relation(fields: [classroomId], references: [id])
-  course      Course             @relation(fields: [courseId], references: [id])
-  teacher     User               @relation("HomeworkTeacher", fields: [teacherId], references: [id])
+  classroom   Classroom            @relation(fields: [classroomId], references: [id])
+  course      Course               @relation(fields: [courseId], references: [id])
+  teacher     User                 @relation("HomeworkTeacher", fields: [teacherId], references: [id])
   attachments HomeworkAttachment[]
   submissions StudentHomework[]
 
@@ -593,18 +622,18 @@ model StudentHomework {
 // ============================================================
 
 model Anecdote {
-  id          BigInt   @id @default(autoincrement())
-  authorId    BigInt   @map("creator_id")
-  studentId   BigInt   @map("student_id")
-  classroomId BigInt?  @map("classroom_id")
-  title       String   @db.VarChar(500)
+  id          BigInt    @id @default(autoincrement())
+  authorId    BigInt    @map("creator_id")
+  studentId   BigInt    @map("student_id")
+  classroomId BigInt?   @map("classroom_id")
+  title       String    @db.VarChar(500)
   description String
   // category: 'general', 'behavior', 'academic', 'social', 'health'
-  category    String   @default("general") @db.VarChar(50)
+  category    String    @default("general") @db.VarChar(50)
   // isPrivate: si es privada, el padre NO la ve
-  isPrivate   Boolean  @default(false) @map("is_private")
-  occurredAt  DateTime @default(now()) @map("occurred_at") @db.Timestamptz()
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  isPrivate   Boolean   @default(false) @map("is_private")
+  occurredAt  DateTime  @default(now()) @map("occurred_at") @db.Timestamptz()
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz()
 
   author      User                 @relation(fields: [authorId], references: [id])
@@ -725,53 +754,79 @@ model Appointment {
 }
 
 // ============================================================
-// MÓDULO 6: MENSAJES DIRECTOS
+// MÓDULO 6: MENSAJERÍA (hilos)
 // ============================================================
+// Reemplaza dos sistemas previos (Message/MessageRecipient tipo correo, y
+// Conversation/ChatMessage tipo chat genérico) que coexistían sin conocerse
+// y sin validar el colegio del destinatario — ver auditoría de mensajería
+// del 30-08-2026. Un solo modelo, con el contexto escolar dentro.
+//
+// schoolId es obligatorio (no nullable): toda consulta se filtra por él desde
+// el JWT, nunca desde el cliente. Es lo que faltaba en el modelo anterior.
 
-model Message {
-  id              BigInt    @id @default(autoincrement())
-  senderId        BigInt    @map("sender_id")
-  subject         String?   @db.VarChar(500)
-  body            String
-  studentId       BigInt?   @map("student_id")
-  // parentMessageId: si es una respuesta, apunta al mensaje original
-  parentMessageId BigInt?   @map("parent_message_id")
-  sentAt          DateTime  @default(now()) @map("sent_at") @db.Timestamptz()
+model Thread {
+  id            BigInt    @id @default(autoincrement())
+  schoolId      BigInt    @map("school_id")
+  // 'direct' (padre↔docente), 'alert' (aviso puntual, ej. ausencia).
+  // Los comunicados masivos NO viven acá — siguen en Announcement, que ya
+  // tiene su propio feed y confirmación de lectura por usuario.
+  kind          String    @default("direct") @db.VarChar(20)
+  subject       String?   @db.VarChar(255)
+  // De qué alumno se habla. Es la llave que separa conversaciones del mismo
+  // par de personas sobre hijos distintos, y lo que un padre con varios hijos
+  // necesita ver de un vistazo en la bandeja.
+  studentId     BigInt?   @map("student_id")
+  priority      String    @default("normal") @db.VarChar(10) // 'normal' | 'urgent'
+  // Se actualiza en cada mensaje nuevo. Ordena la bandeja sin tener que unir
+  // contra la última fila de thread_messages en cada consulta.
+  lastMessageAt DateTime  @default(now()) @map("last_message_at") @db.Timestamptz()
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  closedAt      DateTime? @map("closed_at") @db.Timestamptz()
 
-  sender        User               @relation("MessageSender", fields: [senderId], references: [id])
-  student       Student?           @relation(fields: [studentId], references: [id])
-  parentMessage Message?           @relation("MessageThread", fields: [parentMessageId], references: [id])
-  replies       Message[]          @relation("MessageThread")
-  attachments   MessageAttachment[]
-  recipients    MessageRecipient[]
+  school       School              @relation(fields: [schoolId], references: [id])
+  student      Student?            @relation(fields: [studentId], references: [id])
+  participants ThreadParticipant[]
+  messages     ThreadMessage[]
 
-  @@map("messages")
+  @@index([schoolId, lastMessageAt])
+  @@index([studentId])
+  @@map("threads")
 }
 
-model MessageAttachment {
-  messageId    BigInt @map("message_id")
-  attachmentId BigInt @map("attachment_id")
+model ThreadParticipant {
+  threadId   BigInt    @map("thread_id")
+  userId     BigInt    @map("user_id")
+  // Un solo timestamp resuelve el no-leído: sin leer si
+  // thread.lastMessageAt > lastReadAt (o lastReadAt es null). Evita una fila
+  // de estado por mensaje — el problema de rendimiento del modelo anterior.
+  lastReadAt DateTime? @map("last_read_at") @db.Timestamptz()
+  mutedAt    DateTime? @map("muted_at") @db.Timestamptz()
+  joinedAt   DateTime  @default(now()) @map("joined_at") @db.Timestamptz()
 
-  message    Message    @relation(fields: [messageId], references: [id])
-  attachment Attachment @relation(fields: [attachmentId], references: [id])
+  thread Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
 
-  @@id([messageId, attachmentId])
-  @@map("message_attachments")
+  @@id([threadId, userId])
+  @@index([userId, lastReadAt])
+  @@map("thread_participants")
 }
 
-model MessageRecipient {
-  id          BigInt    @id @default(autoincrement())
-  messageId   BigInt    @map("message_id")
-  recipientId BigInt    @map("recipient_id")
-  // isRead: si el destinatario leyó el mensaje
-  isRead      Boolean   @default(false) @map("is_read")
-  readAt      DateTime? @map("read_at") @db.Timestamptz()
+model ThreadMessage {
+  id        BigInt    @id @default(autoincrement())
+  threadId  BigInt    @map("thread_id")
+  senderId  BigInt    @map("sender_id")
+  body      String
+  sentAt    DateTime  @default(now()) @map("sent_at") @db.Timestamptz()
+  editedAt  DateTime? @map("edited_at") @db.Timestamptz()
+  // Borrado lógico: un colegio puede necesitar mostrar qué se dijo. Nunca
+  // DELETE físico en mensajería escolar.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz()
 
-  message   Message @relation(fields: [messageId], references: [id])
-  recipient User    @relation(fields: [recipientId], references: [id])
+  thread Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender User   @relation(fields: [senderId], references: [id])
 
-  @@unique([messageId, recipientId])
-  @@map("message_recipients")
+  @@index([threadId, sentAt])
+  @@map("thread_messages")
 }
 
 // ============================================================
@@ -841,23 +896,23 @@ model GradePeriod {
 }
 
 model Grade {
-  id        BigInt   @id @default(autoincrement())
-  studentId BigInt   @map("student_id")
+  id           BigInt    @id @default(autoincrement())
+  studentId    BigInt    @map("student_id")
   // courseId directo en lugar de classroomCourseId
-  courseId  BigInt   @map("course_id")
-  periodId  Int      @map("period_id")
+  courseId     BigInt    @map("course_id")
+  periodId     Int       @map("period_id")
   // grade en lugar de score
-  grade     Decimal? @db.Decimal(5, 2)
+  grade        Decimal?  @db.Decimal(5, 2)
   // gradeType: 'numeric', 'letter', 'descriptive'
-  gradeType String?  @map("grade_type") @db.VarChar(20)
+  gradeType    String?   @map("grade_type") @db.VarChar(20)
   // letterGrade: 'A', 'B', 'AD', 'C', etc.
-  letterGrade String? @map("letter_grade") @db.VarChar(5)
+  letterGrade  String?   @map("letter_grade") @db.VarChar(5)
   observations String?
   // gradedBy: el profesor que puso la nota
-  gradedBy  BigInt?  @map("graded_by")
-  gradedAt  DateTime? @map("graded_at") @db.Timestamptz()
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  gradedBy     BigInt?   @map("graded_by")
+  gradedAt     DateTime? @map("graded_at") @db.Timestamptz()
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
 
   student      Student     @relation(fields: [studentId], references: [id])
   course       Course      @relation(fields: [courseId], references: [id])
@@ -886,30 +941,30 @@ model PaymentConcept {
   createdBy   BigInt?   @map("created_by")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
 
-  school       School              @relation(fields: [schoolId], references: [id])
-  createdByUser User?              @relation(fields: [createdBy], references: [id])
-  obligations  PaymentObligation[]
+  school        School              @relation(fields: [schoolId], references: [id])
+  createdByUser User?               @relation(fields: [createdBy], references: [id])
+  obligations   PaymentObligation[]
 
   @@map("payment_concepts")
 }
 
 // PaymentObligation (singular) = lo que cada alumno debe pagar
 model PaymentObligation {
-  id          BigInt    @id @default(autoincrement())
-  studentId   BigInt    @map("student_id")
-  conceptId   Int       @map("concept_id")
-  amount      Decimal   @db.Decimal(10, 2)
-  currency    String    @default("PEN") @db.VarChar(10)
-  dueDate     DateTime? @map("due_date") @db.Date
+  id         BigInt    @id @default(autoincrement())
+  studentId  BigInt    @map("student_id")
+  conceptId  Int       @map("concept_id")
+  amount     Decimal   @db.Decimal(10, 2)
+  currency   String    @default("PEN") @db.VarChar(10)
+  dueDate    DateTime? @map("due_date") @db.Date
   // 'pending', 'partial', 'paid', 'overdue', 'waived'
-  status      String    @default("pending") @db.VarChar(20)
-  assignedBy  BigInt?   @map("assigned_by")
-  paidAt      DateTime? @map("paid_at") @db.Timestamptz()
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  status     String    @default("pending") @db.VarChar(20)
+  assignedBy BigInt?   @map("assigned_by")
+  paidAt     DateTime? @map("paid_at") @db.Timestamptz()
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
 
-  student   Student        @relation(fields: [studentId], references: [id])
-  concept   PaymentConcept @relation(fields: [conceptId], references: [id])
-  payments  Payment[]
+  student  Student        @relation(fields: [studentId], references: [id])
+  concept  PaymentConcept @relation(fields: [conceptId], references: [id])
+  payments Payment[]
 
   @@unique([studentId, conceptId, dueDate])
   @@map("payment_obligations")
@@ -928,65 +983,10 @@ model Payment {
   receiptUrl    String?  @map("receipt_url")
   notes         String?
 
-  obligation    PaymentObligation  @relation(fields: [obligationId], references: [id])
+  obligation     PaymentObligation @relation(fields: [obligationId], references: [id])
   receivedByUser User?             @relation("PaymentReceiver", fields: [receivedBy], references: [id])
 
   @@map("payments")
-}
-
-// ============================================================
-// MÓDULO 10: CHAT (tiempo real via Supabase Realtime)
-// ============================================================
-
-model Conversation {
-  id          BigInt    @id @default(autoincrement())
-  schoolId    BigInt?   @map("school_id")
-  // 'private' (1 a 1) o 'group' (varios)
-  type        String    @default("private") @db.VarChar(20)
-  name        String?   @db.VarChar(255)
-  createdById BigInt?   @map("created_by_id")
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
-  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz()
-
-  createdBy    User?                     @relation(fields: [createdById], references: [id])
-  participants ConversationParticipant[]
-  // messages en lugar de chatMessages (el servicio usa .messages)
-  messages     ChatMessage[]
-
-  @@map("conversations")
-}
-
-model ConversationParticipant {
-  conversationId BigInt    @map("conversation_id")
-  userId         BigInt    @map("user_id")
-  joinedAt       DateTime  @default(now()) @map("joined_at") @db.Timestamptz()
-  leftAt         DateTime? @map("left_at") @db.Timestamptz()
-  lastReadAt     DateTime? @map("last_read_at") @db.Timestamptz()
-
-  conversation Conversation @relation(fields: [conversationId], references: [id])
-  user         User         @relation(fields: [userId], references: [id])
-
-  @@id([conversationId, userId])
-  @@map("conversation_participants")
-}
-
-model ChatMessage {
-  id             BigInt    @id @default(autoincrement())
-  conversationId BigInt    @map("conversation_id")
-  senderId       BigInt    @map("sender_id")
-  body           String?
-  attachmentId   BigInt?   @map("attachment_id")
-  replyToId      BigInt?   @map("reply_to_id")
-  sentAt         DateTime  @default(now()) @map("sent_at") @db.Timestamptz()
-  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz()
-
-  conversation Conversation  @relation(fields: [conversationId], references: [id])
-  sender       User          @relation(fields: [senderId], references: [id])
-  attachment   Attachment?   @relation(fields: [attachmentId], references: [id])
-  replyTo      ChatMessage?  @relation("ChatReply", fields: [replyToId], references: [id])
-  replies      ChatMessage[] @relation("ChatReply")
-
-  @@map("chat_messages")
 }
 
 // ============================================================
@@ -994,19 +994,19 @@ model ChatMessage {
 // ============================================================
 
 model Suggestion {
-  id           BigInt    @id @default(autoincrement())
-  schoolId     BigInt    @map("school_id")
+  id            BigInt    @id @default(autoincrement())
+  schoolId      BigInt    @map("school_id")
   // submittedById: null si es anónima
-  submittedById BigInt?  @map("submitter_id")
-  category     String?   @db.VarChar(50)
-  title        String?   @db.VarChar(500)
+  submittedById BigInt?   @map("submitter_id")
+  category      String?   @db.VarChar(50)
+  title         String?   @db.VarChar(500)
   // description en lugar de body
-  description  String    @map("body")
-  isAnonymous  Boolean   @default(false) @map("is_anonymous")
+  description   String    @map("body")
+  isAnonymous   Boolean   @default(false) @map("is_anonymous")
   // 'pending', 'in_review', 'resolved', 'closed'
-  status       String    @default("pending") @db.VarChar(20)
-  respondedAt  DateTime? @map("responded_at") @db.Timestamptz()
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  status        String    @default("pending") @db.VarChar(20)
+  respondedAt   DateTime? @map("responded_at") @db.Timestamptz()
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
 
   school      School               @relation(fields: [schoolId], references: [id])
   submittedBy User?                @relation(fields: [submittedById], references: [id])
@@ -1016,15 +1016,15 @@ model Suggestion {
 }
 
 model SuggestionResponse {
-  id           BigInt   @id @default(autoincrement())
-  suggestionId BigInt   @map("suggestion_id")
-  respondedById BigInt  @map("responder_id")
+  id            BigInt   @id @default(autoincrement())
+  suggestionId  BigInt   @map("suggestion_id")
+  respondedById BigInt   @map("responder_id")
   // response en lugar de body
-  response     String   @map("body")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  response      String   @map("body")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()
 
-  suggestion   Suggestion @relation(fields: [suggestionId], references: [id])
-  respondedBy  User       @relation(fields: [respondedById], references: [id])
+  suggestion  Suggestion @relation(fields: [suggestionId], references: [id])
+  respondedBy User       @relation(fields: [respondedById], references: [id])
 
   @@map("suggestion_responses")
 }
@@ -1034,40 +1034,40 @@ model SuggestionResponse {
 // ============================================================
 
 model DiscountCampaign {
-  id             BigInt    @id @default(autoincrement())
-  schoolId       BigInt    @map("school_id")
-  name           String    @db.VarChar(255)
+  id             BigInt   @id @default(autoincrement())
+  schoolId       BigInt   @map("school_id")
+  name           String   @db.VarChar(255)
   description    String?
-  discountType   String    @map("discount_type") @db.VarChar(20)
-  discountValue  Decimal   @map("discount_value") @db.Decimal(10, 2)
-  partnerName    String?   @map("partner_name") @db.VarChar(255)
-  partnerLogo    String?   @map("partner_logo")
+  discountType   String   @map("discount_type") @db.VarChar(20)
+  discountValue  Decimal  @map("discount_value") @db.Decimal(10, 2)
+  partnerName    String?  @map("partner_name") @db.VarChar(255)
+  partnerLogo    String?  @map("partner_logo")
   // validFrom / validUntil en lugar de startsAt / expiresAt
-  validFrom      DateTime  @map("starts_at") @db.Timestamptz()
-  validUntil     DateTime  @map("expires_at") @db.Timestamptz()
+  validFrom      DateTime @map("starts_at") @db.Timestamptz()
+  validUntil     DateTime @map("expires_at") @db.Timestamptz()
   // maxRedemptions en lugar de maxUses
-  maxRedemptions Int?      @map("max_uses")
+  maxRedemptions Int?     @map("max_uses")
   // maxPerUser: cuántas veces puede canjear UN usuario
-  maxPerUser     Int?      @map("max_per_user")
-  isActive       Boolean   @default(true) @map("is_active")
-  createdBy      BigInt?   @map("created_by")
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  maxPerUser     Int?     @map("max_per_user")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdBy      BigInt?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
 
-  school      School             @relation(fields: [schoolId], references: [id])
-  createdByUser User?            @relation(fields: [createdBy], references: [id])
-  coupons     DiscountCoupon[]
-  redemptions CouponRedemption[]
+  school        School             @relation(fields: [schoolId], references: [id])
+  createdByUser User?              @relation(fields: [createdBy], references: [id])
+  coupons       DiscountCoupon[]
+  redemptions   CouponRedemption[]
 
   @@map("discount_campaigns")
 }
 
 model DiscountCoupon {
-  id         BigInt    @id @default(autoincrement())
-  campaignId BigInt    @map("campaign_id")
-  code       String    @unique @db.VarChar(50)
+  id         BigInt   @id @default(autoincrement())
+  campaignId BigInt   @map("campaign_id")
+  code       String   @unique @db.VarChar(50)
   // isUsed: si el cupón ya fue utilizado
-  isUsed     Boolean   @default(false) @map("is_used")
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  isUsed     Boolean  @default(false) @map("is_used")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
 
   campaign    DiscountCampaign   @relation(fields: [campaignId], references: [id])
   redemptions CouponRedemption[]
@@ -1076,12 +1076,12 @@ model DiscountCoupon {
 }
 
 model CouponRedemption {
-  id          BigInt   @id @default(autoincrement())
-  campaignId  BigInt   @map("campaign_id")
-  couponId    BigInt   @map("coupon_id")
+  id         BigInt   @id @default(autoincrement())
+  campaignId BigInt   @map("campaign_id")
+  couponId   BigInt   @map("coupon_id")
   // userId: el padre que canjeó el cupón
-  userId      BigInt   @map("user_id")
-  redeemedAt  DateTime @default(now()) @map("redeemed_at") @db.Timestamptz()
+  userId     BigInt   @map("user_id")
+  redeemedAt DateTime @default(now()) @map("redeemed_at") @db.Timestamptz()
 
   campaign DiscountCampaign @relation(fields: [campaignId], references: [id])
   coupon   DiscountCoupon   @relation(fields: [couponId], references: [id])
@@ -1331,8 +1331,8 @@ model GcCoursework {
   alternateLink String?   @map("alternate_link")
   syncedAt      DateTime  @default(now()) @map("synced_at") @db.Timestamptz()
 
-  course       GcCourse              @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  submissions  GcStudentSubmission[]
+  course      GcCourse              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  submissions GcStudentSubmission[]
 
   @@unique([courseId, googleId])
   @@index([courseId, state, workType, dueDate])
@@ -1340,12 +1340,12 @@ model GcCoursework {
 }
 
 model GcStudentSubmission {
-  id               BigInt   @id @default(autoincrement())
-  courseworkId     BigInt   @map("coursework_id")
-  googleId         String   @map("google_id")
-  submissionState  String   @map("submission_state")
-  assignedGrade    Float?   @map("assigned_grade")
-  syncedAt         DateTime @default(now()) @map("synced_at") @db.Timestamptz()
+  id              BigInt   @id @default(autoincrement())
+  courseworkId    BigInt   @map("coursework_id")
+  googleId        String   @map("google_id")
+  submissionState String   @map("submission_state")
+  assignedGrade   Float?   @map("assigned_grade")
+  syncedAt        DateTime @default(now()) @map("synced_at") @db.Timestamptz()
 
   coursework GcCoursework @relation(fields: [courseworkId], references: [id], onDelete: Cascade)
 
@@ -1380,8 +1380,8 @@ model GcStudentSubmission {
 // ============================================================
 
 model Parent {
-  id           BigInt   @id @default(autoincrement())
-  schoolId     BigInt   @map("school_id")
+  id         BigInt   @id @default(autoincrement())
+  schoolId   BigInt   @map("school_id")
   // userId opcional: se vincula cuando el padre crea/activa su cuenta desde la app.
   // NO es único: un User (cuenta) puede ser padre en varios colegios, por lo que
   // puede tener varios perfiles Parent (uno por colegio).
@@ -1389,22 +1389,22 @@ model Parent {
   //   - userId = null  → linkStatus NUNCA puede ser 'linked' (debe ser 'pending' o 'unlinked')
   //   - userId != null → linkStatus DEBE ser 'linked'
   //   - linkStatus = 'unlinked' → userId = null
-  userId       BigInt?  @map("user_id")
-  firstName    String   @map("first_name") @db.VarChar(255)
-  lastName     String?  @map("last_name") @db.VarChar(255)
-  dni          String?  @db.VarChar(20)
-  phone        String?  @db.VarChar(20)
-  email        String?  @db.VarChar(128)
+  userId     BigInt?  @map("user_id")
+  firstName  String   @map("first_name") @db.VarChar(255)
+  lastName   String?  @map("last_name") @db.VarChar(255)
+  dni        String?  @db.VarChar(20)
+  phone      String?  @db.VarChar(20)
+  email      String?  @db.VarChar(128)
   // Estado de vinculación de la cuenta (pending / linked / unlinked).
   // Valores validados a nivel de servicio/DTO (no hay CHECK SQL).
-  linkStatus   String   @default("pending") @map("link_status") @db.VarChar(20)
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  linkStatus String   @default("pending") @map("link_status") @db.VarChar(20)
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz()
 
-  school  School          @relation(fields: [schoolId], references: [id])
-  user    User?           @relation(fields: [userId], references: [id])
-  students ParentStudent[]
+  school      School             @relation(fields: [schoolId], references: [id])
+  user        User?              @relation(fields: [userId], references: [id])
+  students    ParentStudent[]
   invitations SchoolInvitation[]
 
   @@unique([schoolId, dni])

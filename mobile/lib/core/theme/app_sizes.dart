@@ -86,7 +86,7 @@ class AppSizes extends ThemeExtension<AppSizes> {
     glyphAccesos: 13,
     textLabelAccesos: 10,
     iconBottomNav: 19,
-    textLabelBottomNav: 8.5,
+    textLabelBottomNav: 10.5,
     childSwitcherCircle: 36,
     cardPadding: 24,
   );
@@ -107,7 +107,7 @@ class AppSizes extends ThemeExtension<AppSizes> {
     glyphAccesos: 17,
     textLabelAccesos: 13,
     iconBottomNav: 19,
-    textLabelBottomNav: 10,
+    textLabelBottomNav: 12,
     childSwitcherCircle: 41.1,
     cardPadding: 24, // fijo: el margen del scaffold no crece con el breakpoint
   );

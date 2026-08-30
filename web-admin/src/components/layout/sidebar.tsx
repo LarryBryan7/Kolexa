@@ -7,6 +7,8 @@ import {
   Users,
   GraduationCap,
   Contact,
+  CalendarClock,
+  Link2,
   Upload,
   LogOut,
 } from 'lucide-react';
@@ -23,14 +25,29 @@ const navItems = [
   { to: '/usuarios', label: 'Usuarios', icon: Users, end: false },
   { to: '/alumnos', label: 'Alumnos', icon: GraduationCap, end: false },
   { to: '/padres', label: 'Padres', icon: Contact, end: false },
+  { to: '/horarios', label: 'Horarios', icon: CalendarClock, end: false },
+  { to: '/classroom', label: 'Classroom', icon: Link2, end: false },
   { to: '/importar', label: 'Importar', icon: Upload, end: false },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  open: boolean;
+  /** Se llama al tocar un ítem: en móvil cierra el menú tras navegar. */
+  onNavigate: () => void;
+}
+
+export function Sidebar({ open, onNavigate }: SidebarProps) {
   const { user, logout } = useAuth();
 
   return (
-    <aside className="flex h-full w-60 flex-col border-r bg-white">
+    <aside
+      className={cn(
+        'flex h-full w-60 shrink-0 flex-col border-r bg-white',
+        // En móvil flota sobre el contenido; en escritorio ocupa su columna.
+        'fixed inset-y-0 left-0 z-50 transition-transform duration-200 lg:static lg:z-auto',
+        open ? 'translate-x-0' : '-translate-x-full lg:hidden',
+      )}
+    >
       {/* Logo */}
       <div className="flex h-16 items-center gap-3 border-b px-5">
         <div className="kolexa-logo" aria-hidden="true">
@@ -49,6 +66,7 @@ export function Sidebar() {
             key={item.to}
             to={item.to}
             end={item.end}
+            onClick={onNavigate}
             className={({ isActive }) =>
               cn(
                 'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
