@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/api/api_client.dart';
+import '../../../core/services/push_notifications_service.dart';
 import '../data/threads_repository.dart';
 import 'new_message_page.dart';
 import 'thread_page.dart';
@@ -32,6 +33,21 @@ class _InboxPageState extends State<InboxPage> {
   void initState() {
     super.initState();
     _load();
+    PushNotificationsService.instance.addDataRefreshListener(_handleDataRefresh);
+  }
+
+  @override
+  void dispose() {
+    PushNotificationsService.instance.removeDataRefreshListener(_handleDataRefresh);
+    super.dispose();
+  }
+
+  // Llega un mensaje nuevo en cualquier conversación: la bandeja se
+  // refresca sola (nuevo orden, preview, punto de no-leído) sin que haga
+  // falta salir y volver a entrar a la pestaña.
+  void _handleDataRefresh(Map<String, dynamic> data) {
+    if (!mounted || data['screen'] != 'thread') return;
+    _onRefresh();
   }
 
   void _load() {
