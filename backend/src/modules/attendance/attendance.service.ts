@@ -44,47 +44,48 @@ export class AttendanceService {
   // extraía con colon-split del campo del estudiante (.split(':')[3]).
   // Aquí usamos IDs reales de la base de datos — no hay parsing raro.
   async createSession(dto: CreateAttendanceDto, teacherId: bigint) {
-    // Verificar que el aula existe
-    const classroom = await this.prisma.classroom.findUnique({
-      where: { id: dto.classroomId },
-    });
+    // Las tres solo dependen de datos del DTO (classroomId/date/año actual),
+    // ninguna del resultado de otra — corren en paralelo.
+    const dateObj = new Date(dto.date);
+    const currentYear = new Date().getFullYear();
+    const [classroom, existing, enrollments] = await Promise.all([
+      // Verificar que el aula existe
+      this.prisma.classroom.findUnique({
+        where: { id: dto.classroomId },
+      }),
+      // Verificar que no existe ya una sesión para ese aula y fecha
+      // (no puede haber dos sesiones de asistencia el mismo día para el mismo aula)
+      this.prisma.attendance.findFirst({
+        where: {
+          classroomId: dto.classroomId,
+          // Buscar por día completo: desde inicio hasta fin del día
+          date: {
+            gte: new Date(dateObj.setHours(0, 0, 0, 0)),
+            lte: new Date(dateObj.setHours(23, 59, 59, 999)),
+          },
+        },
+      }),
+      // Obtener todos los alumnos matriculados en el aula para el año actual
+      // (usamos student_enrollments para soportar múltiples años académicos)
+      this.prisma.studentEnrollment.findMany({
+        where: {
+          classroomId: dto.classroomId,
+          academicYear: currentYear,
+          isActive: true,
+        },
+        include: {
+          student: true, // traer los datos del alumno
+        },
+      }),
+    ]);
     if (!classroom) {
       throw new NotFoundException(`Aula con ID ${dto.classroomId} no encontrada`);
     }
-
-    // Verificar que no existe ya una sesión para ese aula y fecha
-    // (no puede haber dos sesiones de asistencia el mismo día para el mismo aula)
-    const dateObj = new Date(dto.date);
-    const existing = await this.prisma.attendance.findFirst({
-      where: {
-        classroomId: dto.classroomId,
-        // Buscar por día completo: desde inicio hasta fin del día
-        date: {
-          gte: new Date(dateObj.setHours(0, 0, 0, 0)),
-          lte: new Date(dateObj.setHours(23, 59, 59, 999)),
-        },
-      },
-    });
-
     if (existing) {
       throw new ConflictException(
         `Ya existe una sesión de asistencia para esta aula el ${dto.date}`,
       );
     }
-
-    // Obtener todos los alumnos matriculados en el aula para el año actual
-    // (usamos student_enrollments para soportar múltiples años académicos)
-    const currentYear = new Date().getFullYear();
-    const enrollments = await this.prisma.studentEnrollment.findMany({
-      where: {
-        classroomId: dto.classroomId,
-        academicYear: currentYear,
-        isActive: true,
-      },
-      include: {
-        student: true, // traer los datos del alumno
-      },
-    });
 
     // Crear la sesión Y los registros de todos los alumnos en una sola transacción.
     // Una TRANSACCIÓN garantiza que todo se guarda o nada se guarda.
@@ -297,37 +298,39 @@ export class AttendanceService {
       }
     }
 
-    // Obtener el historial ordenado por fecha descendente (más reciente primero)
-    const records = await this.prisma.attendanceRecord.findMany({
-      where: { studentId },
-      include: {
-        attendance: {
-          include: {
-            classroom: {
-              select: { name: true, grade: true, section: true },
-            },
-            course: {
-              select: { name: true },
+    // Las tres consultas usan el mismo `studentId` fijo y ninguna depende
+    // del resultado de otra — corren en paralelo.
+    const [records, total, stats] = await Promise.all([
+      // Obtener el historial ordenado por fecha descendente (más reciente primero)
+      this.prisma.attendanceRecord.findMany({
+        where: { studentId },
+        include: {
+          attendance: {
+            include: {
+              classroom: {
+                select: { name: true, grade: true, section: true },
+              },
+              course: {
+                select: { name: true },
+              },
             },
           },
         },
-      },
-      orderBy: { attendance: { date: 'desc' } },
-      take: limit,
-      skip: offset,
-    });
-
-    // Contar el total para la paginación
-    const total = await this.prisma.attendanceRecord.count({
-      where: { studentId },
-    });
-
-    // Calcular estadísticas de asistencia
-    const stats = await this.prisma.attendanceRecord.groupBy({
-      by: ['status'],
-      where: { studentId },
-      _count: { status: true },
-    });
+        orderBy: { attendance: { date: 'desc' } },
+        take: limit,
+        skip: offset,
+      }),
+      // Contar el total para la paginación
+      this.prisma.attendanceRecord.count({
+        where: { studentId },
+      }),
+      // Calcular estadísticas de asistencia
+      this.prisma.attendanceRecord.groupBy({
+        by: ['status'],
+        where: { studentId },
+        _count: { status: true },
+      }),
+    ]);
 
     return { records, total, stats };
   }

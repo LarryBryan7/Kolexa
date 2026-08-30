@@ -70,12 +70,15 @@ export class AnecdotesService {
     },
     teacherId: bigint,
   ) {
-    const student = await this.prisma.student.findUnique({
-      where: { id: data.studentId, deletedAt: null },
-    });
+    // `isTeacherOfStudent` no usa nada del `student` recién buscado, solo
+    // los ids de entrada — corren en paralelo.
+    const [student, authorized] = await Promise.all([
+      this.prisma.student.findUnique({
+        where: { id: data.studentId, deletedAt: null },
+      }),
+      this.isTeacherOfStudent(teacherId, data.studentId),
+    ]);
     if (!student) throw new NotFoundException('Alumno no encontrado');
-
-    const authorized = await this.isTeacherOfStudent(teacherId, data.studentId);
     if (!authorized) {
       throw new ForbiddenException('No dictas clases a este alumno');
     }

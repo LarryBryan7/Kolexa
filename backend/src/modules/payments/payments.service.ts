@@ -67,18 +67,21 @@ export class PaymentsService {
     schoolId: bigint,
     userId: bigint,
   ) {
-    const concept = await this.prisma.paymentConcept.findUnique({
-      where: { id: data.conceptId },
-    });
+    // Ninguna depende del resultado de la otra — corren en paralelo.
+    const [concept, students] = await Promise.all([
+      this.prisma.paymentConcept.findUnique({
+        where: { id: data.conceptId },
+      }),
+      this.prisma.student.findMany({
+        where: { id: { in: data.studentIds } },
+        select: { id: true, schoolId: true },
+      }),
+    ]);
     if (!concept) throw new NotFoundException('Concepto de pago no encontrado');
     if (concept.schoolId !== schoolId) {
       throw new ForbiddenException('Este concepto de pago no pertenece a tu colegio');
     }
 
-    const students = await this.prisma.student.findMany({
-      where: { id: { in: data.studentIds } },
-      select: { id: true, schoolId: true },
-    });
     const belongsToAnotherSchool = students.some((s) => s.schoolId !== schoolId);
     if (belongsToAnotherSchool || students.length !== data.studentIds.length) {
       throw new ForbiddenException('Uno o más alumnos no pertenecen a tu colegio');

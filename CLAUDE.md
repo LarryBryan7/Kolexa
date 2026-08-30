@@ -4,6 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Communication Rules
 - **Language:** Always respond and explain in Spanish, regardless of the language used in the prompt (even if prompted in English for model efficiency).
+- **Dialect:** Neutral Spanish only — standard "tú" conjugation (tienes, quieres, puedes, avísame, haz clic). **Never use Rioplatense/Argentine voseo** (vos, tenés, querés, podés, hacé, mirá, andá, fijate, entrá, tocá) — this applies to chat responses, `AskUserQuestion` text, and any UI copy written in code (buttons, labels, confirmations, error messages). Rule of thumb: any imperative ending in a stressed "-á"/"-é" is voseo — the neutral form ends in unstressed "-a"/"-e" instead.
 
 ## Project overview
 

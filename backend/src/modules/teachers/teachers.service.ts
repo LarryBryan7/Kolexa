@@ -236,17 +236,41 @@ export class TeachersService {
     const day = new Date(limaDateStr).getDay(); // 0=Dom … 6=Sáb
     if (day === 0 || day === 6) return [];
 
-    const blocks = await this.prisma.scheduleBlock.findMany({
-      where: { ownerId: userId, dayOfWeek: day },
-      include: { gcTeacherCourse: { select: { name: true } } },
+    // Fuente principal: el horario del AULA. Un docente puede dictar en varias
+    // aulas, así que sus bloques salen de todas las que tiene asignadas
+    // (classroom_courses.teacher_id), ordenados por hora.
+    const classroomBlocks = await this.prisma.scheduleBlock.findMany({
+      where: { dayOfWeek: day, classroomCourse: { teacherId: userId } },
+      include: {
+        classroomCourse: { select: { course: { select: { name: true } } } },
+      },
       orderBy: { startTime: 'asc' },
     });
+
+    // Respaldo: el horario que el propio docente cargó (modelo anterior). Solo
+    // se usa si su colegio todavía no cargó el horario del aula, para no dejar
+    // sin horario a quien ya lo tenía.
+    const blocks = classroomBlocks.length
+      ? classroomBlocks
+      : await this.prisma.scheduleBlock.findMany({
+          where: { ownerId: userId, dayOfWeek: day },
+          include: { gcTeacherCourse: { select: { name: true } } },
+          orderBy: { startTime: 'asc' },
+        });
 
     return blocks.map((b) => {
       const fmt = (d: Date) =>
         new Date(d).toISOString().substring(11, 16); // "HH:mm"
+      // El nombre sale del curso institucional o, si no hay, del curso de
+      // Classroom (respaldo). Los bloques sin curso (recreo, tutoría, salida…)
+      // muestran su etiqueta.
+      const courseName =
+        ('classroomCourse' in b ? b.classroomCourse?.course?.name : undefined) ??
+        ('gcTeacherCourse' in b ? b.gcTeacherCourse?.name : undefined) ??
+        b.label ??
+        (b.type === 'recess' ? 'Recreo' : '–');
       return {
-        courseName: b.type === 'recess' ? 'Recreo' : (b.gcTeacherCourse?.name ?? '–'),
+        courseName,
         type: b.type,
         startTime: fmt(b.startTime as unknown as Date),
         endTime: fmt(b.endTime as unknown as Date),

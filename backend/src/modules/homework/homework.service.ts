@@ -35,23 +35,25 @@ export class HomeworkService {
   // Automáticamente crea un registro StudentHomework vacío
   // para cada alumno matriculado en el aula.
   async createHomework(dto: CreateHomeworkDto, teacherId: bigint) {
-    // Verificar que el aula existe
-    const classroom = await this.prisma.classroom.findUnique({
-      where: { id: dto.classroomId },
-    });
+    // Ninguna depende del resultado de la otra — corren en paralelo.
+    const currentYear = new Date().getFullYear();
+    const [classroom, enrollments] = await Promise.all([
+      // Verificar que el aula existe
+      this.prisma.classroom.findUnique({
+        where: { id: dto.classroomId },
+      }),
+      // Obtener alumnos matriculados en el aula (año actual)
+      this.prisma.studentEnrollment.findMany({
+        where: {
+          classroomId: dto.classroomId,
+          academicYear: currentYear,
+          isActive: true,
+        },
+      }),
+    ]);
     if (!classroom) {
       throw new NotFoundException(`Aula ${dto.classroomId} no encontrada`);
     }
-
-    // Obtener alumnos matriculados en el aula (año actual)
-    const currentYear = new Date().getFullYear();
-    const enrollments = await this.prisma.studentEnrollment.findMany({
-      where: {
-        classroomId: dto.classroomId,
-        academicYear: currentYear,
-        isActive: true,
-      },
-    });
 
     // Crear la tarea + los registros de entrega en una transacción
     const homework = await this.prisma.$transaction(async (tx) => {

@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, Pencil } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { ToggleActiveButton } from '@/components/toggle-active-button';
 import { LoadingState } from '@/components/loading-state';
 import { ErrorState } from '@/components/error-state';
 import { DataTable } from '@/components/data-table';
@@ -155,6 +156,15 @@ export function AlumnosPage() {
           <Button variant="ghost" size="icon" onClick={() => openEdit(row.original)} aria-label="Editar">
             <Pencil className="h-4 w-4" />
           </Button>
+          <ToggleActiveButton
+            isActive={row.original.isActive}
+            name={`${row.original.firstName} ${row.original.lastName ?? ''}`.trim()}
+            entityLabel="el alumno"
+            consequence="Dejará de aparecer en las listas de su aula y sus padres no verán novedades suyas."
+            onToggle={(isActive) =>
+              updateStudent.mutateAsync({ id: row.original.id, data: { isActive } })
+            }
+          />
         </div>
       ),
     },

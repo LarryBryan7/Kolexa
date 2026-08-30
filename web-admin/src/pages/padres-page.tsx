@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, Pencil, Send, Copy, Check, UserPlus, X } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { ToggleActiveButton } from '@/components/toggle-active-button';
 import { LoadingState } from '@/components/loading-state';
 import { ErrorState } from '@/components/error-state';
 import { DataTable } from '@/components/data-table';
@@ -205,6 +206,15 @@ export function PadresPage() {
           <Button variant="ghost" size="icon" onClick={() => openEdit(row.original)} aria-label="Editar">
             <Pencil className="h-4 w-4" />
           </Button>
+          <ToggleActiveButton
+            isActive={row.original.isActive}
+            name={`${row.original.firstName} ${row.original.lastName ?? ''}`.trim()}
+            entityLabel="el padre"
+            consequence="Perderá el acceso a la app y dejará de recibir avisos del colegio."
+            onToggle={(isActive) =>
+              updateParent.mutateAsync({ id: row.original.id, data: { isActive } })
+            }
+          />
         </div>
       ),
     },

@@ -10,6 +10,8 @@ import { UsuariosPage } from '@/pages/usuarios-page';
 import { AlumnosPage } from '@/pages/alumnos-page';
 import { PadresPage } from '@/pages/padres-page';
 import { ImportarPage } from '@/pages/importar-page';
+import { HorariosPage } from '@/pages/horarios-page';
+import { ClassroomImportPage } from '@/pages/classroom-import-page';
 
 export default function App() {
   return (
@@ -29,6 +31,8 @@ export default function App() {
         <Route path="/usuarios" element={<UsuariosPage />} />
         <Route path="/alumnos" element={<AlumnosPage />} />
         <Route path="/padres" element={<PadresPage />} />
+        <Route path="/horarios" element={<HorariosPage />} />
+        <Route path="/classroom" element={<ClassroomImportPage />} />
         <Route path="/importar" element={<ImportarPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

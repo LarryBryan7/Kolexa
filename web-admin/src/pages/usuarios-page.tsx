@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, Pencil, Send, Copy, Check } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { ToggleActiveButton } from '@/components/toggle-active-button';
 import { LoadingState } from '@/components/loading-state';
 import { ErrorState } from '@/components/error-state';
 import { DataTable } from '@/components/data-table';
@@ -202,6 +203,15 @@ export function UsuariosPage() {
           <Button variant="ghost" size="icon" onClick={() => openEdit(row.original)} aria-label="Editar">
             <Pencil className="h-4 w-4" />
           </Button>
+          <ToggleActiveButton
+            isActive={row.original.isActive}
+            name={`${row.original.firstName} ${row.original.lastName ?? ''}`.trim()}
+            entityLabel="el docente"
+            consequence="Perderá el acceso a la app y dejará de contar como personal activo."
+            onToggle={(isActive) =>
+              updateUser.mutateAsync({ id: row.original.id, data: { isActive } })
+            }
+          />
         </div>
       ),
     },

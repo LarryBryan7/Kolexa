@@ -36,26 +36,26 @@ export class AnnouncementsService {
     },
     authorId: bigint,
   ) {
-    // 1. Crear el comunicado
-    const announcement = await this.prisma.announcement.create({
-      data: {
-        title: data.title,
-        content: data.content,
-        scopeType: data.scopeType,
-        scopeId: data.scopeId,
-        schoolId: data.schoolId,
-        authorId,
-        isPinned: data.isPinned ?? false,
-        publishedAt: new Date(), // publicado inmediatamente
-      },
-    });
-
-    // 2. Determinar los usuarios que deben recibir el comunicado
-    //    y crear los registros de lectura (todos inician como 'no leído')
-    const recipientIds = await this._getRecipientIds(
-      data.scopeType,
-      data.scopeId,
-    );
+    // `_getRecipientIds` solo usa scopeType/scopeId de la entrada, no el
+    // comunicado recién creado — corren en paralelo.
+    const [announcement, recipientIds] = await Promise.all([
+      // 1. Crear el comunicado
+      this.prisma.announcement.create({
+        data: {
+          title: data.title,
+          content: data.content,
+          scopeType: data.scopeType,
+          scopeId: data.scopeId,
+          schoolId: data.schoolId,
+          authorId,
+          isPinned: data.isPinned ?? false,
+          publishedAt: new Date(), // publicado inmediatamente
+        },
+      }),
+      // 2. Determinar los usuarios que deben recibir el comunicado
+      //    (los registros de lectura, todos 'no leído', se crean abajo)
+      this._getRecipientIds(data.scopeType, data.scopeId),
+    ]);
 
     if (recipientIds.length > 0) {
       // createMany inserta todos los registros en una sola query SQL
@@ -87,40 +87,43 @@ export class AnnouncementsService {
     limit = 20,
     offset = 0,
   ) {
-    // Obtener los comunicados que el usuario debe ver,
-    // incluyendo si ya los leyó o no
-    const announcements = await this.prisma.announcement.findMany({
-      where: {
-        // Comunicados de la escuela del usuario
-        OR: [
-          { scopeType: 'school', scopeId: schoolId },
-          // En el futuro, agregar filtro por aulas del usuario
+    // El conteo de no leídos no depende de la lista de comunicados (ni al
+    // revés) — corren en paralelo en vez de uno tras otro.
+    const [announcements, unreadCount] = await Promise.all([
+      // Obtener los comunicados que el usuario debe ver,
+      // incluyendo si ya los leyó o no
+      this.prisma.announcement.findMany({
+        where: {
+          // Comunicados de la escuela del usuario
+          OR: [
+            { scopeType: 'school', scopeId: schoolId },
+            // En el futuro, agregar filtro por aulas del usuario
+          ],
+          publishedAt: { not: null }, // solo los publicados
+          deletedAt: null,
+        },
+        include: {
+          author: {
+            select: { firstName: true, lastName: true, avatar: true },
+          },
+          readRecords: {
+            where: { userId }, // solo el registro de lectura de ESTE usuario
+            select: { isRead: true, readAt: true },
+          },
+          _count: { select: { attachments: true } },
+        },
+        orderBy: [
+          { isPinned: 'desc' }, // fijados primero
+          { publishedAt: 'desc' }, // más recientes primero
         ],
-        publishedAt: { not: null }, // solo los publicados
-        deletedAt: null,
-      },
-      include: {
-        author: {
-          select: { firstName: true, lastName: true, avatar: true },
-        },
-        readRecords: {
-          where: { userId }, // solo el registro de lectura de ESTE usuario
-          select: { isRead: true, readAt: true },
-        },
-        _count: { select: { attachments: true } },
-      },
-      orderBy: [
-        { isPinned: 'desc' }, // fijados primero
-        { publishedAt: 'desc' }, // más recientes primero
-      ],
-      take: limit,
-      skip: offset,
-    });
-
-    // Contar no leídos (para el badge en la campanita)
-    const unreadCount = await this.prisma.announcementRead.count({
-      where: { userId, isRead: false },
-    });
+        take: limit,
+        skip: offset,
+      }),
+      // Contar no leídos (para el badge en la campanita)
+      this.prisma.announcementRead.count({
+        where: { userId, isRead: false },
+      }),
+    ]);
 
     return { announcements, unreadCount };
   }

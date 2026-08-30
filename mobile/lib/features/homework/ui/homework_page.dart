@@ -15,6 +15,8 @@ import 'package:intl/intl.dart'; // para formatear fechas en español
 import '../bloc/homework_bloc.dart';
 import '../data/models/homework_model.dart';
 
+const _kPrimary = Color(0xFF5B4A9E);
+
 // ── HomeworkTeacherPage ───────────────────────────────────
 // Vista del PROFESOR: lista de tareas creadas para su aula
 class HomeworkTeacherPage extends StatefulWidget {
@@ -130,22 +132,41 @@ class _HomeworkTeacherPageState extends State<HomeworkTeacherPage> {
 class HomeworkParentPage extends StatefulWidget {
   final int studentId;
   final String studentName;
+  // Al llegar desde un mensaje que mencionó una tarea ("@"): salta a la
+  // pestaña correcta (pendiente o entregada) y la resalta, en vez de dejar
+  // al padre buscándola en la lista.
+  final int? highlightHomeworkId;
 
   const HomeworkParentPage({
     super.key,
     required this.studentId,
     required this.studentName,
+    this.highlightHomeworkId,
   });
 
   @override
   State<HomeworkParentPage> createState() => _HomeworkParentPageState();
 }
 
-class _HomeworkParentPageState extends State<HomeworkParentPage> {
+class _HomeworkParentPageState extends State<HomeworkParentPage>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+  // Solo se salta de pestaña una vez: sin esto, cada rebuild (ej. al llegar
+  // datos nuevos) volvería a forzar la pestaña, ignorando que el padre ya
+  // pudo haber cambiado a la otra por su cuenta.
+  bool _didJumpToHighlight = false;
+
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     context.read<HomeworkBloc>().add(LoadStudentHomeworkEvent(widget.studentId));
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   @override
@@ -169,29 +190,37 @@ class _HomeworkParentPageState extends State<HomeworkParentPage> {
       );
     }
 
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        children: [
-          // Tabs: Pendientes / Entregadas
-          const TabBar(
-            tabs: [
-              Tab(text: 'Pendientes'),
-              Tab(text: 'Entregadas'),
+    final highlight = widget.highlightHomeworkId;
+    if (highlight != null && !_didJumpToHighlight) {
+      _didJumpToHighlight = true;
+      final inSubmitted = state.submitted.any((h) => h.id == highlight);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _tabController.animateTo(inSubmitted ? 1 : 0);
+      });
+    }
+
+    return Column(
+      children: [
+        // Tabs: Pendientes / Entregadas
+        TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'Pendientes'),
+            Tab(text: 'Entregadas'),
+          ],
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              // Tab 1: Tareas pendientes
+              _HomeworkListView(homeworks: state.pending, highlightId: highlight),
+              // Tab 2: Tareas ya entregadas
+              _HomeworkListView(homeworks: state.submitted, highlightId: highlight),
             ],
           ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                // Tab 1: Tareas pendientes
-                _HomeworkListView(homeworks: state.pending),
-                // Tab 2: Tareas ya entregadas
-                _HomeworkListView(homeworks: state.submitted),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -337,60 +366,106 @@ class _ProgressPill extends StatelessWidget {
 
 // ── _HomeworkListView ─────────────────────────────────────
 // Lista de tareas del alumno (vista del padre)
-class _HomeworkListView extends StatelessWidget {
+class _HomeworkListView extends StatefulWidget {
   final List<StudentHomeworkModel> homeworks;
+  final int? highlightId;
 
-  const _HomeworkListView({required this.homeworks});
+  const _HomeworkListView({required this.homeworks, this.highlightId});
+
+  @override
+  State<_HomeworkListView> createState() => _HomeworkListViewState();
+}
+
+class _HomeworkListViewState extends State<_HomeworkListView> {
+  final Map<int, GlobalKey> _itemKeys = {};
+  bool _didScroll = false;
+
+  @override
+  void didUpdateWidget(covariant _HomeworkListView old) {
+    super.didUpdateWidget(old);
+    // El TabController cambia de pestaña ANTES de que esta vista se
+    // construya con datos reales, así que el intento de scroll también se
+    // reintenta acá, no solo en initState.
+    _maybeScrollToHighlight();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeScrollToHighlight());
+  }
+
+  void _maybeScrollToHighlight() {
+    final id = widget.highlightId;
+    if (id == null || _didScroll) return;
+    final key = _itemKeys[id];
+    final ctx = key?.currentContext;
+    if (ctx == null) return; // esta pestaña no tiene esa tarea, o aún no se pintó
+    _didScroll = true;
+    Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 400), alignment: 0.1);
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (homeworks.isEmpty) {
+    if (widget.homeworks.isEmpty) {
       return const Center(child: Text('No hay tareas en esta sección'));
     }
 
     return ListView.separated(
       padding: const EdgeInsets.all(16),
-      itemCount: homeworks.length,
+      itemCount: widget.homeworks.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
-        final hw = homeworks[index];
-        return ListTile(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: Colors.grey.shade200),
-          ),
-          leading: CircleAvatar(
-            backgroundColor:
-                Color(hw.status.colorValue).withValues(alpha: 0.15),
-            child: Icon(
-              Icons.assignment_outlined,
-              color: Color(hw.status.colorValue),
-              size: 20,
+        final hw = widget.homeworks[index];
+        final isHighlighted = hw.id == widget.highlightId;
+        final itemKey = _itemKeys.putIfAbsent(hw.id, () => GlobalKey());
+        return Container(
+          key: itemKey,
+          decoration: isHighlighted
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _kPrimary, width: 2),
+                )
+              : null,
+          child: ListTile(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: isHighlighted ? BorderSide.none : BorderSide(color: Colors.grey.shade200),
             ),
-          ),
-          title: Text(hw.title,
-              style: const TextStyle(fontWeight: FontWeight.w500)),
-          subtitle: Text(
-            '${hw.courseName} · ${DateFormat('d MMM', 'es').format(hw.dueDate)}',
-            style: const TextStyle(fontSize: 12),
-          ),
-          trailing: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Color(hw.status.colorValue).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              hw.status.label,
-              style: TextStyle(
-                fontSize: 11,
+            tileColor: isHighlighted ? _kPrimary.withValues(alpha: 0.06) : null,
+            leading: CircleAvatar(
+              backgroundColor:
+                  Color(hw.status.colorValue).withValues(alpha: 0.15),
+              child: Icon(
+                Icons.assignment_outlined,
                 color: Color(hw.status.colorValue),
-                fontWeight: FontWeight.w600,
+                size: 20,
               ),
             ),
+            title: Text(hw.title,
+                style: const TextStyle(fontWeight: FontWeight.w500)),
+            subtitle: Text(
+              '${hw.courseName} · ${DateFormat('d MMM', 'es').format(hw.dueDate)}',
+              style: const TextStyle(fontSize: 12),
+            ),
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Color(hw.status.colorValue).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                hw.status.label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Color(hw.status.colorValue),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            // Si el profesor dejó una nota, mostrarla expandida
+            isThreeLine: hw.teacherNote != null,
           ),
-          // Si el profesor dejó una nota, mostrarla expandida
-          isThreeLine: hw.teacherNote != null,
         );
       },
     );

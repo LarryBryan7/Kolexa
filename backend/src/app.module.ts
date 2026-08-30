@@ -26,8 +26,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { HomeworkModule } from './modules/homework/homework.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
-import { MessagesModule } from './modules/messages/messages.module';
-import { ChatModule } from './modules/chat/chat.module';
+import { ThreadsModule } from './modules/threads/threads.module';
 
 // ── Fase 3 ────────────────────────────────────────────────
 import { GradesModule } from './modules/grades/grades.module';
@@ -53,6 +52,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 // ── Web Admin ─────────────────────────────────────────────
 import { AdminModule } from './modules/admin/admin.module';
 import { ImportModule } from './modules/import/import.module';
+import { ScheduleImportModule } from './modules/schedule-import/schedule-import.module';
 
 @Module({
   imports: [
@@ -78,8 +78,7 @@ import { ImportModule } from './modules/import/import.module';
     AttendanceModule,      // Asistencia (P/A/T/J por alumno)
     HomeworkModule,        // Tareas y seguimiento de entregas
     AnnouncementsModule,   // Comunicados del colegio/aula (broadcast)
-    MessagesModule,        // Mensajes directos padre ↔ profesor
-    ChatModule,            // Chat en tiempo real (Supabase Realtime)
+    ThreadsModule,         // Mensajería 1:1 (padre ↔ docente ↔ director)
 
     // ── Fase 3: Gestión académica y seguridad ─────────────
     GradesModule,          // Notas por periodo (boleta)
@@ -105,6 +104,7 @@ import { ImportModule } from './modules/import/import.module';
     // ── Web Admin ─────────────────────────────────────────────
     AdminModule,           // CRUD de administración (solo school_admin)
     ImportModule,          // Importación masiva (modo seguro: preview + confirm)
+    ScheduleImportModule,  // Horario de aula desde foto (Gemini + revisión humana)
   ],
   providers: [
     // Global — corre en TODAS las rutas (con el límite generoso de

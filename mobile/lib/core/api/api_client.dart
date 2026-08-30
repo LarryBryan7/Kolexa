@@ -33,7 +33,14 @@ class ApiClient {
   );
   // Flag explícito: solo se activa si el desarrollador pasa KOLEXA_DEV_HOST
   // en el build. En producción (sin el flag) siempre usamos api.kolexa.pe.
-  static const bool _useDevHost = bool.fromEnvironment('KOLEXA_DEV_HOST');
+  //
+  // Se compara el String contra vacío en vez de usar bool.fromEnvironment con
+  // la misma clave: bool.fromEnvironment solo devuelve true si el valor es
+  // literalmente "true", así que pasar --dart-define=KOLEXA_DEV_HOST=10.0.2.2
+  // dejaba el flag en false y la app en release se iba a Railway sin avisar,
+  // aunque el host de desarrollo estuviera bien configurado.
+  static const bool _useDevHost =
+      String.fromEnvironment('KOLEXA_DEV_HOST') != '';
   // En debug, permite forzar el backend de producción (Railway) pasando
   // --dart-define=KOLEXA_USE_RAILWAY=true. Útil para probar con hot reload
   // contra Railway sin necesidad de levantar el backend local.

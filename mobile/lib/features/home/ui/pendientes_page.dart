@@ -17,6 +17,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/services/manufacturer_settings_service.dart';
+import '../../../core/utils/lima_date.dart';
 import '../../classroom/data/models/gc_models.dart';
 
 // Íconos exportados 1:1 desde Figma (exportAsync SVG_STRING) — se
@@ -24,21 +25,14 @@ import '../../classroom/data/models/gc_models.dart';
 // en vez de depender del stroke color fijo que trae cada SVG.
 const _kSvgClipboardList =
     '<svg width="20" height="21" viewBox="0 0 20 21" fill="none" xmlns="http://www.w3.org/2000/svg">'
-    '<path d="M8.14286 3.77778H6.57143C6.15466 3.77778 5.75496 3.96508 5.46026 4.29848C5.16556 4.63187 5 5.08406 5 5.55556V16.2222C5 16.6937 5.16556 17.1459 5.46026 17.4793C5.75496 17.8127 6.15466 18 6.57143 18H14.4286C14.8453 18 15.245 17.8127 15.5397 17.4793C15.8344 17.1459 16 16.6937 16 16.2222V5.55556C16 5.08406 15.8344 4.63187 15.5397 4.29848C15.245 3.96508 14.8453 3.77778 14.4286 3.77778H12.8571M8.14286 3.77778C8.14286 3.30628 8.30842 2.8541 8.60312 2.5207C8.89782 2.1873 9.29752 2 9.71429 2H11.2857C11.7025 2 12.1022 2.1873 12.3969 2.5207C12.6916 2.8541 12.8571 3.30628 12.8571 3.77778M8.14286 3.77778C8.14286 4.24927 8.30842 4.70146 8.60312 5.03486C8.89782 5.36825 9.29752 5.55556 9.71429 5.55556H11.2857C11.7025 5.55556 12.1022 5.36825 12.3969 5.03486C12.6916 4.70146 12.8571 4.24927 12.8571 3.77778M8.14286 10H8.15071M11.2857 10H12.8571M8.14286 13.5556H8.15071M11.2857 13.5556H12.8571" stroke="#5B4A9E" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M8.33333 3.75H6.66667C6.22464 3.75 5.80072 3.93437 5.48816 4.26256C5.17559 4.59075 5 5.03587 5 5.5V16C5 16.4641 5.17559 16.9092 5.48816 17.2374C5.80072 17.5656 6.22464 17.75 6.66667 17.75H15C15.442 17.75 15.866 17.5656 16.1785 17.2374C16.4911 16.9092 16.6667 16.4641 16.6667 16V5.5C16.6667 5.03587 16.4911 4.59075 16.1785 4.26256C15.866 3.93437 15.442 3.75 15 3.75H13.3333M8.33333 3.75C8.33333 3.28587 8.50893 2.84075 8.82149 2.51256C9.13405 2.18437 9.55797 2 10 2H11.6667C12.1087 2 12.5326 2.18437 12.8452 2.51256C13.1577 2.84075 13.3333 3.28587 13.3333 3.75M8.33333 3.75C8.33333 4.21413 8.50893 4.65925 8.82149 4.98744C9.13405 5.31563 9.55797 5.5 10 5.5H11.6667C12.1087 5.5 12.5326 5.31563 12.8452 4.98744C13.1577 4.65925 13.3333 4.21413 13.3333 3.75M8.33333 9.875H8.34167M11.6667 9.875H13.3333M8.33333 13.375H8.34167M11.6667 13.375H13.3333" stroke="#186DE8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
     '</svg>';
 
 const _kBg = Color(0xFFF7F6F3);
 // "Pendientes" (título del header) — gris medio, distinto del gris de
 // subtítulo y del casi-negro de los títulos de tarjeta (medido en Figma).
 const _kHeaderTitle = Color(0xFF444444);
-// Atrás (‹) + título de cada tarjeta de tarea.
-const _kBack = Color(0xFF1E1B29);
 const _kGray = Color(0xFF666666);
-// Morado: acento de todo lo "activo" (chip seleccionado, tarjeta de
-// tarea, link "Ver en classroom") — reemplazó al ámbar que tenía antes.
-const _kPrimary = Color(0xFF5B4A9E);
-const _kPrimaryLt = Color(0xFFEDE8FA);
-
 // Fondo compartido por tabs y chips en su estado inactivo.
 const _kSegmentInactiveBg = Color(0xFFF0F0F0);
 
@@ -47,34 +41,51 @@ const _kHoyActiveBg = Color(0xFFE29A2E);
 const _kAmberBadgeBg = Color(0xFFF6E0AB);
 const _kAmberBadgeText = Color(0xFF693902);
 
+// Chip de filtro (Tareas/Comunicados/Reuniones) activo — ámbar, mismo
+// texto/badge que el tab "Hoy" pero con su propio fondo más clarito.
+const _kChipActiveBg = Color(0xFFFBF0DD);
+
 // Badge numérico (círculo) de los chips de filtro.
-const _kChipBadgeActiveBg = Color(0xFFD4C9F0);
 const _kChipBadgeInactiveBg = Color(0xFFDEDEDE);
 const _kChipBadgeInactiveText = Color(0xFFA9A9A9);
 
 // Separador vertical entre "Semana" y "Calendario" en el selector.
 const _kTabDivider = Color(0xFFD0D7DF);
 
-enum _RangoTab { hoy, semana, calendario }
+// Divisor horizontal dentro de la tarjeta de tarea, entre el subtítulo
+// y el chip "Ver en classroom".
+const _kCardDivider = Color(0xFFE5E5EA);
+
+// Tarjeta de tarea (medido de nuevo en Figma): título y acento del
+// ícono pasaron de violeta a una paleta azul, y "Ver en classroom" se
+// convirtió en un chip/botón con fondo propio (antes era texto suelto).
+const _kTaskTitle = Color(0xFF0C3271);
+const _kTaskIconBg = Color(0xFFDFEBF7);
+const _kTaskIconFg = Color(0xFF186DE8);
+
+// Público: home_v2_page.dart lo usa para abrir esta pantalla ya
+// posicionada en un tab específico (ej. "Esta semana" → RangoTab.semana).
+enum RangoTab { hoy, semana, calendario }
 
 enum _FiltroChip { tareas, comunicados, reuniones }
 
 class PendientesPage extends StatefulWidget {
   final String studentName;
   // Tareas de Classroom que vencen HOY (ya cargadas por el Home vía
-  // /parent/home — esta pantalla no hace su propia petición, igual que
-  // EstaSemanPage reutiliza los datos que ya trajo el Home).
+  // /parent/home — esta pantalla no hace su propia petición).
   final List<GcCoursework> todayTasks;
-  // Conteo real del resto de la semana (ya calculado por el Home) —
-  // solo alimenta el badge del tab "Semana"; el contenido de esa
-  // pestaña sigue sin conectar a datos reales.
-  final int weekCount;
+  // Tareas del resto de la semana (sin contar hoy) — ya cargadas y
+  // filtradas por el Home con el mismo criterio que antes usaba
+  // EstaSemanPage (que se eliminó; este tab absorbió su contenido).
+  final List<GcCoursework> weekTasks;
+  final RangoTab initialTab;
 
   const PendientesPage({
     super.key,
     this.studentName = '',
     this.todayTasks = const [],
-    this.weekCount = 0,
+    this.weekTasks = const [],
+    this.initialTab = RangoTab.hoy,
   });
 
   @override
@@ -82,7 +93,7 @@ class PendientesPage extends StatefulWidget {
 }
 
 class _PendientesPageState extends State<PendientesPage> {
-  _RangoTab _tab = _RangoTab.hoy;
+  late RangoTab _tab = widget.initialTab;
   _FiltroChip _filtro = _FiltroChip.tareas;
 
   @override
@@ -119,8 +130,8 @@ class _PendientesPageState extends State<PendientesPage> {
                         color: _kSegmentInactiveBg,
                         shape: BoxShape.circle,
                       ),
-                      child: const Text('‹',
-                          style: TextStyle(fontSize: 20, color: _kBack)),
+                      child: const Icon(Icons.chevron_left,
+                          size: 20, color: _kHeaderTitle),
                     ),
                   ),
                   const SizedBox(width: 9),
@@ -162,7 +173,7 @@ class _PendientesPageState extends State<PendientesPage> {
                       selected: _tab,
                       onChanged: (t) => setState(() => _tab = t),
                       hoyCount: widget.todayTasks.length,
-                      semanaCount: widget.weekCount,
+                      semanaCount: widget.weekTasks.length,
                     ),
                     const SizedBox(height: 8),
 
@@ -171,8 +182,12 @@ class _PendientesPageState extends State<PendientesPage> {
                       children: [
                         _FiltroChipWidget(
                           label: 'Tareas',
-                          count: widget.todayTasks.length,
-                          width: 73,
+                          // El conteo del chip sigue al tab activo: tareas de
+                          // hoy en el tab Hoy, del resto de la semana en Semana.
+                          count: _tab == RangoTab.semana
+                              ? widget.weekTasks.length
+                              : widget.todayTasks.length,
+                          width: 80,
                           active: _filtro == _FiltroChip.tareas,
                           onTap: () =>
                               setState(() => _filtro = _FiltroChip.tareas),
@@ -204,11 +219,10 @@ class _PendientesPageState extends State<PendientesPage> {
                     const SizedBox(height: 10),
 
                     // ── Lista de tarjetas ────────────────────────
-                    // Hoy + Tareas ya usa datos reales de Classroom (las
-                    // tareas que vencen hoy). El resto de combinaciones
-                    // (Semana/Calendario, Comunicados/Reuniones) sigue
-                    // pendiente de conectar a datos reales.
-                    if (_tab == _RangoTab.hoy &&
+                    // Hoy y Semana + Tareas ya usan datos reales de
+                    // Classroom. El resto (Calendario, Comunicados/
+                    // Reuniones) sigue pendiente de conectar a datos reales.
+                    if (_tab == RangoTab.hoy &&
                         _filtro == _FiltroChip.tareas) ...[
                       if (widget.todayTasks.isEmpty)
                         const Padding(
@@ -228,6 +242,30 @@ class _PendientesPageState extends State<PendientesPage> {
                             classroomLink: cw.alternateLink,
                           ),
                           const SizedBox(height: 8),
+                        ],
+                    ] else if (_tab == RangoTab.semana &&
+                        _filtro == _FiltroChip.tareas) ...[
+                      if (widget.weekTasks.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 24),
+                          child: Center(
+                            child: Text(
+                              'Sin pendientes esta semana.',
+                              style: TextStyle(fontSize: 13, color: _kGray),
+                            ),
+                          ),
+                        )
+                      else
+                        for (final cw in widget.weekTasks) ...[
+                          if (cw.dueDate != null) ...[
+                            _TaskCard(
+                              title: cw.title,
+                              subtitle:
+                                  'Vence ${_relativeDayLabel(limaDay(cw.dueDate!))} · ${cw.courseName}',
+                              classroomLink: cw.alternateLink,
+                            ),
+                            const SizedBox(height: 8),
+                          ],
                         ],
                     ] else
                       const Padding(
@@ -256,8 +294,8 @@ class _PendientesPageState extends State<PendientesPage> {
 // (redondeado a la derecha), con una línea divisoria fina entre
 // Semana y Calendario — copiado 1:1 de Figma.
 class _RangoSelector extends StatelessWidget {
-  final _RangoTab selected;
-  final ValueChanged<_RangoTab> onChanged;
+  final RangoTab selected;
+  final ValueChanged<RangoTab> onChanged;
   final int hoyCount;
   final int semanaCount;
 
@@ -299,8 +337,8 @@ class _RangoSelector extends StatelessWidget {
                         topLeft: Radius.circular(10),
                         bottomLeft: Radius.circular(10),
                       ),
-                      active: selected == _RangoTab.hoy,
-                      onTap: () => onChanged(_RangoTab.hoy),
+                      active: selected == RangoTab.hoy,
+                      onTap: () => onChanged(RangoTab.hoy),
                     ),
                   ),
                   Expanded(
@@ -309,8 +347,8 @@ class _RangoSelector extends StatelessWidget {
                       label: 'Semana',
                       count: semanaCount,
                       radius: BorderRadius.zero,
-                      active: selected == _RangoTab.semana,
-                      onTap: () => onChanged(_RangoTab.semana),
+                      active: selected == RangoTab.semana,
+                      onTap: () => onChanged(RangoTab.semana),
                     ),
                   ),
                   Expanded(
@@ -321,8 +359,8 @@ class _RangoSelector extends StatelessWidget {
                         topRight: Radius.circular(10),
                         bottomRight: Radius.circular(10),
                       ),
-                      active: selected == _RangoTab.calendario,
-                      onTap: () => onChanged(_RangoTab.calendario),
+                      active: selected == RangoTab.calendario,
+                      onTap: () => onChanged(RangoTab.calendario),
                     ),
                   ),
                 ],
@@ -429,10 +467,10 @@ class _FiltroChipWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = active ? _kPrimaryLt : _kSegmentInactiveBg;
-    final fg = active ? _kPrimary : _kGray;
-    final badgeBg = active ? _kChipBadgeActiveBg : _kChipBadgeInactiveBg;
-    final badgeFg = active ? _kPrimary : _kChipBadgeInactiveText;
+    final bg = active ? _kChipActiveBg : _kSegmentInactiveBg;
+    final fg = active ? _kAmberBadgeText : _kGray;
+    final badgeBg = active ? _kAmberBadgeBg : _kChipBadgeInactiveBg;
+    final badgeFg = active ? _kAmberBadgeText : _kChipBadgeInactiveText;
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -471,6 +509,22 @@ class _FiltroChipWidget extends StatelessWidget {
   }
 }
 
+// ── Etiqueta relativa de día (tab "Semana") ─────────────────
+// En vez de un encabezado de fecha aparte por grupo de día, cada
+// tarjeta dice "Vence mañana · curso" (si el día es mañana) o "Vence
+// 29 Agosto · curso" (cualquier otro día) — mismo patrón de una sola
+// línea que usa el tab "Hoy" ("Vence hoy · curso"). widget.weekTasks
+// ya viene filtrado a "de mañana en adelante", así que "mañana"
+// siempre es el primer día posible.
+String _relativeDayLabel(DateTime day) {
+  final tomorrow = limaToday().add(const Duration(days: 1));
+  if (day == tomorrow) return 'mañana';
+  final dayNum = DateFormat('d', 'es').format(day);
+  final month = DateFormat('MMMM', 'es').format(day);
+  final monthCap = month.isEmpty ? month : month[0].toUpperCase() + month.substring(1);
+  return '$dayNum $monthCap';
+}
+
 // ── Tarjeta de tarea pendiente ───────────────────────────────
 class _TaskCard extends StatelessWidget {
   final String title;
@@ -504,7 +558,7 @@ class _TaskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final tieneLink = classroomLink != null;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 13, 9, 9),
+      padding: const EdgeInsets.fromLTRB(12, 13, 9, 13),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
@@ -515,10 +569,10 @@ class _TaskCard extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 28,
-                height: 28,
+                width: 30,
+                height: 30,
                 decoration: const BoxDecoration(
-                  color: _kPrimaryLt,
+                  color: _kTaskIconBg,
                   shape: BoxShape.circle,
                 ),
                 alignment: Alignment.center,
@@ -526,7 +580,7 @@ class _TaskCard extends StatelessWidget {
                   _kSvgClipboardList,
                   width: 20,
                   height: 21,
-                  colorFilter: const ColorFilter.mode(_kPrimary, BlendMode.srcIn),
+                  colorFilter: const ColorFilter.mode(_kTaskIconFg, BlendMode.srcIn),
                 ),
               ),
               const SizedBox(width: 8),
@@ -540,7 +594,7 @@ class _TaskCard extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: _kBack,
+                        color: _kTaskTitle,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -556,37 +610,53 @@ class _TaskCard extends StatelessWidget {
                     style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
-                        color: _kPrimary)),
+                        color: _kTaskIconFg)),
             ],
           ),
           if (tieneLink) ...[
-            const SizedBox(height: 8),
-            InkWell(
-              onTap: _abrirClassroom,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Image.asset(
-                    'assets/icons/google_classroom_icon.png',
-                    width: 17,
-                    height: 17,
+            const SizedBox(height: 13),
+            Padding(
+              padding: const EdgeInsets.only(left: 34),
+              child: Container(height: 1, color: _kCardDivider),
+            ),
+            const SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerRight,
+              child: InkWell(
+                onTap: _abrirClassroom,
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(13, 5, 10, 5),
+                  decoration: BoxDecoration(
+                    color: _kTaskIconBg,
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                  const SizedBox(width: 2),
-                  const Text(
-                    'Ver en classroom',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: _kPrimary,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  const Text('›',
-                      style: TextStyle(
-                          fontSize: 16,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Image.asset(
+                        'assets/icons/google_classroom_icon.png',
+                        width: 16,
+                        height: 16,
+                      ),
+                      const SizedBox(width: 11),
+                      const Text(
+                        'Ver en classroom',
+                        style: TextStyle(
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: _kPrimary)),
-                ],
+                          color: _kTaskIconFg,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text('›',
+                          style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: _kTaskIconFg)),
+                    ],
+                  ),
+                ),
               ),
             ),
           ],
