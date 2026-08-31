@@ -1342,19 +1342,26 @@ export class ClassroomService {
 
     // La query de schedule_blocks depende del teacher_id de la sesión, así
     // que primero obtenemos la sesión (1 conexión) y luego el resto en una
-    // transacción (1 conexión). Total 2 conexiones en vez de 4.
-    const sessionRows = await this.prisma.$queryRaw<SessionRow[]>`
-      SELECT s.id, s.teacher_id, s.created_at, s.photo_urls,
-             (SELECT r.status FROM gc_attendance_records r WHERE r.session_id = s.id ORDER BY r.id LIMIT 1) AS status
-      FROM gc_attendance_sessions s
-      WHERE s.date = ${todayDate}
-      ORDER BY s.created_at DESC
-      LIMIT 1
-    `;
+    // transacción (1 conexión). Total 2 conexiones en vez de 4. La consulta
+    // del avatar es independiente (solo necesita studentId) — corre en
+    // paralelo con la de la sesión.
+    const [sessionRows, studentForAvatar] = await Promise.all([
+      this.prisma.$queryRaw<SessionRow[]>`
+        SELECT s.id, s.teacher_id, s.created_at, s.photo_urls,
+               (SELECT r.status FROM gc_attendance_records r WHERE r.session_id = s.id ORDER BY r.id LIMIT 1) AS status
+        FROM gc_attendance_sessions s
+        WHERE s.date = ${todayDate}
+        ORDER BY s.created_at DESC
+        LIMIT 1
+      `,
+      this.prisma.student.findUnique({ where: { id: studentId }, select: { avatar: true } }),
+    ]);
 
     // Las 3 queries restantes se mantienen en UNA transacción (1 conexión)
-    // para no cambiar el comportamiento con el pooler (connection_limit=1).
-    const [blockRows, tokenRows, upcomingRows] = await this.prisma.$transaction(async (tx) => {
+    // para no cambiar el comportamiento con el pooler. Firmar el avatar no
+    // toca la base (es una llamada a la API de Storage) — corre en paralelo.
+    const [[blockRows, tokenRows, upcomingRows], avatarUrls] = await Promise.all([
+      this.prisma.$transaction(async (tx) => {
       // Fuente principal: el horario del AULA en la que está matriculado el
       // alumno. Es el que carga el colegio (importación por foto) y el único
       // que cubre bloques sin curso — recreo, tutoría, salida — que el horario
@@ -1418,8 +1425,13 @@ export class ClassroomService {
         LIMIT 20
       `;
 
-      return [blocks, tokens, upcoming] as [BlockRow[], TokenRow[], UpcomingRow[]];
-    });
+        return [blocks, tokens, upcoming] as [BlockRow[], TokenRow[], UpcomingRow[]];
+      }),
+      studentForAvatar?.avatar
+        ? this.storage.getSignedUrls([studentForAvatar.avatar], 3600, 'avatars')
+        : Promise.resolve([]),
+    ]);
+    const avatarUrl = avatarUrls[0] ?? null;
 
     // ── todaySummary ──
     const session = sessionRows[0] ?? null;
@@ -1492,7 +1504,7 @@ export class ClassroomService {
         }))
       : [];
 
-    return { todaySummary, upcomingStatus: { connected, upcoming } };
+    return { todaySummary, upcomingStatus: { connected, upcoming }, avatarUrl };
   }
 
   async isConnected(studentId: bigint): Promise<boolean> {

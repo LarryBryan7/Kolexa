@@ -584,18 +584,28 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     return '¡Buenas noches';
   }
 
+  // `c.avatarUrl` viene de la respuesta de login (URL firmada, vence en
+  // 1h) y no se vuelve a pedir en toda la sesión — si la app queda abierta
+  // más de una hora, la foto del hijo desaparece (cae al círculo con
+  // iniciales). `/parent/home` ahora devuelve una URL recién firmada para
+  // el hijo actualmente seleccionado en cada refresh (incluido el que
+  // dispara volver del background), así que se usa esa en vez de la vieja.
   List<_Child> _buildChildren(AuthState state) {
     if (state is AuthAuthenticated && state.user.children.isNotEmpty) {
-      return state.user.children
-          .map((c) => _Child(
-                studentId: c.id.toString(),
-                initials: _initials(c.firstName, c.lastName),
-                fullName: c.fullName,
-                section: c.section,
-                age: c.age,
-                avatarUrl: c.avatarUrl,
-              ))
-          .toList();
+      return state.user.children.asMap().entries.map((entry) {
+        final i = entry.key;
+        final c = entry.value;
+        final freshAvatar =
+            i == _selectedChild ? _parentHome?.avatarUrl : null;
+        return _Child(
+          studentId: c.id.toString(),
+          initials: _initials(c.firstName, c.lastName),
+          fullName: c.fullName,
+          section: c.section,
+          age: c.age,
+          avatarUrl: freshAvatar ?? c.avatarUrl,
+        );
+      }).toList();
     }
     return [];
   }
