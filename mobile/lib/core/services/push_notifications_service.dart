@@ -122,9 +122,17 @@ class PushNotificationsService {
       return settings.authorizationStatus == AuthorizationStatus.authorized ||
              settings.authorizationStatus == AuthorizationStatus.provisional;
     }
-    // Android 13+: el permiso POST_NOTIFICATIONS se pide en AndroidManifest
-    // y Flutter lo muestra automáticamente al primer mensaje
-    return true;
+    // Android 13+: el permiso POST_NOTIFICATIONS. Antes esta función
+    // devolvía `true` sin pedir nada, asumiendo que se mostraba solo "al
+    // primer mensaje" — en la práctica nunca se pedía de verdad, así que
+    // el banner de "notificaciones desactivadas" seguía apareciendo aunque
+    // el usuario tocara "Activar" (el único permiso que sí se pedía a
+    // continuación era el de batería, uno distinto). Se pide explícito acá,
+    // igual que ya se hace con `Permission.ignoreBatteryOptimizations`.
+    final status = await Permission.notification.status;
+    if (status.isGranted) return true;
+    final result = await Permission.notification.request();
+    return result.isGranted;
   }
 
   Future<void> _refreshToken() async {
