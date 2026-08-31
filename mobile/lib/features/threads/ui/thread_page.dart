@@ -130,7 +130,13 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   // primera carga, cuando todavía no hay nada que mostrar.
   Future<void> _load({bool forceScroll = false}) async {
     final shouldScroll = forceScroll || _isNearBottom;
-    if (_messages == null) setState(() => _loadingFirstTime = true);
+    // Al entrar a la conversación por primera vez, tiene que aparecer YA
+    // en el final — sin animación. `animateTo` (250ms) es lo que causaba
+    // el "salto" visible de mensajes de arriba bajando hasta el actual;
+    // eso solo tiene sentido cuando ya se está mirando el chat y llega
+    // uno nuevo, no al abrir.
+    final isFirstLoad = _messages == null;
+    if (isFirstLoad) setState(() => _loadingFirstTime = true);
     try {
       final msgs = await _repo.getMessages(widget.threadId);
       _cache[widget.threadId] = msgs;
@@ -141,7 +147,8 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
         _loadingFirstTime = false;
       });
       if (shouldScroll) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => _scrollToBottom(animate: !isFirstLoad));
       }
     } catch (e) {
       if (!mounted) return;
@@ -155,8 +162,12 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
     }
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool animate = true}) {
     if (!_scroll.hasClients) return;
+    if (!animate) {
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      return;
+    }
     _scroll.animateTo(
       _scroll.position.maxScrollExtent,
       duration: const Duration(milliseconds: 250),
