@@ -30,6 +30,7 @@ function makePrisma(overrides: Record<string, any> = {}) {
       createMany: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
     threadMessage: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
@@ -458,6 +459,7 @@ describe('ThreadsService.getMessages — paginación', () => {
       threadParticipant: {
         findUnique: jest.fn().mockResolvedValue({ thread: { closedAt: null } }),
         findMany: jest.fn(),
+        findFirst: jest.fn(),
         createMany: jest.fn(),
         update: jest.fn(),
       },
@@ -470,12 +472,48 @@ describe('ThreadsService.getMessages — paginación', () => {
       },
     });
 
-    const msgs = await service.getMessages(1n, PARENT.id, 10n, 30);
+    const result = await service.getMessages(1n, PARENT.id, 10n, 30);
     expect(prisma.threadMessage.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ id: { lt: 10n } }) }),
     );
     // Se pidió desc (id 5, luego 4) y se devuelve invertido: 4 antes que 5.
-    expect(msgs.map((m) => m.id)).toEqual(['4', '5']);
+    expect(result.messages.map((m) => m.id)).toEqual(['4', '5']);
+  });
+
+  it('incluye el lastReadAt del OTRO participante, para el doble check de leído', async () => {
+    const readAt = new Date('2026-08-31T10:00:00.000Z');
+    const { service, prisma } = makeService({
+      threadParticipant: {
+        findUnique: jest.fn().mockResolvedValue({ thread: { closedAt: null } }),
+        findMany: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue({ lastReadAt: readAt }),
+        createMany: jest.fn(),
+        update: jest.fn(),
+      },
+      threadMessage: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
+    });
+
+    const result = await service.getMessages(1n, PARENT.id);
+    expect(result.otherLastReadAt).toEqual(readAt);
+    expect(prisma.threadParticipant.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { threadId: 1n, userId: { not: PARENT.id } } }),
+    );
+  });
+
+  it('otherLastReadAt es null si el otro participante nunca leyó', async () => {
+    const { service } = makeService({
+      threadParticipant: {
+        findUnique: jest.fn().mockResolvedValue({ thread: { closedAt: null } }),
+        findMany: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue({ lastReadAt: null }),
+        createMany: jest.fn(),
+        update: jest.fn(),
+      },
+      threadMessage: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
+    });
+
+    const result = await service.getMessages(1n, PARENT.id);
+    expect(result.otherLastReadAt).toBeNull();
   });
 });
 

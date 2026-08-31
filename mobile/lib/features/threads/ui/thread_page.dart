@@ -11,6 +11,7 @@
 import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -162,7 +163,7 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   // se recree (ej. salir y volver a entrar a la misma conversación), así
   // que reabrirla muestra los mensajes al instante mientras se refrescan
   // solos en segundo plano.
-  static final Map<String, List<ThreadMessage>> _cache = {};
+  static final Map<String, ThreadMessagesPage> _cache = {};
 
   late final ThreadsRepository _repo;
   late final int _myUserId;
@@ -170,9 +171,16 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   final _controller = _MentionComposerController();
   final _scroll = ScrollController();
   List<ThreadMessage>? _messages;
+  DateTime? _otherLastReadAt;
   bool _loadingFirstTime = false;
-  bool _sending = false;
   String? _error;
+  // Mensajes propios ya "enviados" del lado del usuario (aparecen al
+  // instante, con relojito) pero que el backend todavía no confirmó — se
+  // mantienen aparte de `_messages` (que es la lista que el servidor ya
+  // confirmó) para que un refresh concurrente por otra razón (push de
+  // otro hilo, resume de background) nunca los borre de golpe mientras
+  // el envío sigue en vuelo.
+  List<ThreadMessage> _pendingMessages = [];
 
   // ── Autocompletado de "@" ──────────────────────────────────
   Timer? _mentionDebounce;
@@ -187,7 +195,8 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
     _myUserId = authState is AuthAuthenticated ? authState.user.id : -1;
     _myRoles = authState is AuthAuthenticated ? authState.user.roles : const [];
     _controller.addListener(_onTextChanged);
-    _messages = _cache[widget.threadId];
+    _messages = _cache[widget.threadId]?.messages;
+    _otherLastReadAt = _cache[widget.threadId]?.otherLastReadAt;
     _load();
     // Se marca leído al entrar: si el otro responde mientras se lee, el
     // siguiente refresh de la bandeja ya no lo mostrará como pendiente.
@@ -234,11 +243,12 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   Future<void> _load({bool forceScroll = false}) async {
     if (_messages == null) setState(() => _loadingFirstTime = true);
     try {
-      final msgs = await _repo.getMessages(widget.threadId);
-      _cache[widget.threadId] = msgs;
+      final page = await _repo.getMessages(widget.threadId);
+      _cache[widget.threadId] = page;
       if (!mounted) return;
       setState(() {
-        _messages = msgs;
+        _messages = page.messages;
+        _otherLastReadAt = page.otherLastReadAt;
         _error = null;
         _loadingFirstTime = false;
       });
@@ -390,18 +400,50 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
 
   Future<void> _send() async {
     final body = _controller.text.trim();
-    if (body.isEmpty || _sending) return;
-    setState(() => _sending = true);
+    if (body.isEmpty) return;
+    _controller.clear();
+    await _sendBody(body);
+  }
+
+  // Envío optimista, estilo WhatsApp: el mensaje aparece al instante con
+  // un relojito (pendiente) en vez de tapar la pantalla con un spinner
+  // mientras se espera al servidor. Se guarda aparte en `_pendingMessages`
+  // (no en `_messages`) para que un refresh concurrente por otra razón
+  // (push de otro hilo, resume de background) nunca lo borre de golpe
+  // mientras el envío sigue en vuelo. Si falla, la burbuja queda marcada
+  // para poder tocarla y reintentar.
+  Future<void> _sendBody(String body) async {
+    final tempId = 'pending-${DateTime.now().microsecondsSinceEpoch}';
+    final pending = ThreadMessage(
+      id: tempId,
+      senderId: _myUserId.toString(),
+      senderName: '',
+      body: body,
+      sentAt: DateTime.now(),
+      isPending: true,
+    );
+    SystemSound.play(SystemSoundType.click);
+    setState(() => _pendingMessages = [..._pendingMessages, pending]);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     try {
       await _repo.sendMessage(widget.threadId, body);
-      _controller.clear();
-      _load(forceScroll: true);
+      if (!mounted) return;
+      setState(() => _pendingMessages = _pendingMessages.where((m) => m.id != tempId).toList());
+      await _load(forceScroll: true);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
-    } finally {
-      if (mounted) setState(() => _sending = false);
+      setState(() {
+        _pendingMessages = _pendingMessages
+            .map((m) => m.id == tempId ? m.copyWith(isFailed: true) : m)
+            .toList();
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
     }
+  }
+
+  void _retrySend(ThreadMessage failed) {
+    setState(() => _pendingMessages = _pendingMessages.where((m) => m.id != failed.id).toList());
+    _sendBody(failed.body);
   }
 
   @override
@@ -463,7 +505,11 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
                     );
                   }
                 }
-                final messages = _messages ?? [];
+                // Los mensajes ya confirmados por el servidor + los que el
+                // propio usuario acaba de mandar y todavía están en vuelo
+                // (con relojito) — siempre van al final, en el orden en que
+                // se dispararon.
+                final messages = [...(_messages ?? []), ..._pendingMessages];
                 if (messages.isEmpty) {
                   return const Center(
                     child: Text('Escribe el primer mensaje',
@@ -481,10 +527,18 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
                       // que se pinta abajo del todo, así que hay que
                       // invertir el mapeo acá.
                       final message = messages[messages.length - 1 - i];
+                      final isMine = message.senderId == _myUserId.toString();
                       return _Bubble(
                         message: message,
-                        isMine: message.senderId == _myUserId.toString(),
+                        isMine: isMine,
+                        // El doble check solo tiene sentido en mensajes
+                        // propios ya confirmados — nunca en los pendientes.
+                        isRead: isMine &&
+                            !message.isPending &&
+                            _otherLastReadAt != null &&
+                            !_otherLastReadAt!.isBefore(message.sentAt),
                         onOpenMention: _openMention,
+                        onRetry: message.isFailed ? () => _retrySend(message) : null,
                       );
                     },
                   );
@@ -497,7 +551,7 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(_error!, style: const TextStyle(color: Color(0xFFBA3428), fontSize: 12)),
               ),
-            _Composer(controller: _controller, sending: _sending, onSend: _send),
+            _Composer(controller: _controller, onSend: _send),
           ],
         ),
       ),
@@ -556,8 +610,21 @@ class _MentionSuggestions extends StatelessWidget {
 class _Bubble extends StatelessWidget {
   final ThreadMessage message;
   final bool isMine;
+  // true si el OTRO participante ya leyó este mensaje (su lastReadAt es
+  // posterior al sentAt de este mensaje) — solo se calcula para mensajes
+  // propios ya confirmados, ver ThreadPage.build().
+  final bool isRead;
   final void Function(String type, String refId) onOpenMention;
-  const _Bubble({required this.message, required this.isMine, required this.onOpenMention});
+  // No nulo solo si este mensaje falló al enviarse — tocar la burbuja
+  // reintenta.
+  final VoidCallback? onRetry;
+  const _Bubble({
+    required this.message,
+    required this.isMine,
+    this.isRead = false,
+    required this.onOpenMention,
+    this.onRetry,
+  });
 
   String _time(DateTime dt) =>
       '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
@@ -594,44 +661,73 @@ class _Bubble extends StatelessWidget {
     return [TextSpan(style: TextStyle(color: baseColor, fontSize: 14.5, height: 1.3), children: spans)];
   }
 
+  // Reloj (enviando) → un check (el servidor ya lo guardó) → doble check
+  // (el otro participante ya lo leyó). No hay un estado real de
+  // "entregado pero no leído" — no hay infraestructura de esa señal
+  // (WebSocket/ack), así que un check cubre "mandado" y dos checks es la
+  // única confirmación real que se tiene: que lo leyó.
+  Widget _statusIcon() {
+    final color = Colors.white.withValues(alpha: 0.7);
+    if (message.isFailed) {
+      return const Icon(Icons.error_outline, size: 13, color: Color(0xFFFFD1CC));
+    }
+    if (message.isPending) {
+      return Icon(Icons.access_time_rounded, size: 12, color: color);
+    }
+    return Icon(isRead ? Icons.done_all_rounded : Icons.done_rounded, size: 14, color: color);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: isMine ? _kPrimary : Colors.white,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(14),
-            topRight: const Radius.circular(14),
-            bottomLeft: Radius.circular(isMine ? 14 : 4),
-            bottomRight: Radius.circular(isMine ? 4 : 14),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text.rich(TextSpan(children: _buildSpans(context))),
-            const SizedBox(height: 4),
-            Text(_time(message.sentAt),
-                style: TextStyle(
-                    fontSize: 10,
-                    color: isMine ? Colors.white.withValues(alpha: 0.7) : _kTextGray)),
-          ],
+    final bubble = Container(
+      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isMine ? (message.isFailed ? _kPrimary.withValues(alpha: 0.6) : _kPrimary) : Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(14),
+          topRight: const Radius.circular(14),
+          bottomLeft: Radius.circular(isMine ? 14 : 4),
+          bottomRight: Radius.circular(isMine ? 4 : 14),
         ),
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text.rich(TextSpan(children: _buildSpans(context))),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                message.isFailed ? 'No enviado · toca para reintentar' : _time(message.sentAt),
+                style: TextStyle(
+                  fontSize: 10,
+                  color: isMine ? Colors.white.withValues(alpha: 0.7) : _kTextGray,
+                ),
+              ),
+              if (isMine) ...[
+                const SizedBox(width: 4),
+                _statusIcon(),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+
+    return Align(
+      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+      child: onRetry != null ? GestureDetector(onTap: onRetry, child: bubble) : bubble,
     );
   }
 }
 
 class _Composer extends StatelessWidget {
   final TextEditingController controller;
-  final bool sending;
   final VoidCallback onSend;
-  const _Composer({required this.controller, required this.sending, required this.onSend});
+  const _Composer({required this.controller, required this.onSend});
 
   @override
   Widget build(BuildContext context) {
@@ -665,16 +761,14 @@ class _Composer extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            sending
-                ? const Padding(
-                    padding: EdgeInsets.all(10),
-                    child: SizedBox(
-                        width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-                  )
-                : IconButton(
-                    onPressed: onSend,
-                    icon: const Icon(Icons.send_rounded, color: _kPrimary),
-                  ),
+            // Sin estado de "enviando" que tape el botón: el mensaje se
+            // manda de forma optimista (aparece al instante en la
+            // conversación con su propio relojito) — no hay nada que
+            // esperar acá.
+            IconButton(
+              onPressed: onSend,
+              icon: const Icon(Icons.send_rounded, color: _kPrimary),
+            ),
           ],
         ),
       ),
