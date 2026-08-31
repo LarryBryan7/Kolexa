@@ -39,30 +39,56 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
+  // Caché en memoria de "el usuario sigue activo" — esta consulta corre en
+  // TODA la app, en cada request autenticado, y cada ida a la base cuesta
+  // ~350-400ms contra el pooler de Supabase en producción. Con un TTL
+  // corto, la navegación normal (varias pantallas en unos segundos) paga
+  // esta consulta una sola vez en vez de una por request. El costo de
+  // seguridad es acotado: si a alguien lo desactivan, en el peor caso
+  // conserva acceso unos segundos más — nunca hasta que expire el token
+  // entero (1h).
+  private static readonly ACTIVE_CACHE_TTL_MS = 30_000;
+  private readonly activeUserCache = new Map<string, { email: string; expiresAt: number }>();
+
   // validate() se llama con el PAYLOAD del JWT (datos que pusimos al crear el token).
   // Lo que devuelve este método queda disponible como request.user
   // y puede accederse con el decorador @CurrentUser().
   async validate(payload: any): Promise<UserPayload> {
-    // Verificar que el usuario sigue existiendo y está activo.
-    // Un usuario podría haber sido desactivado después de obtener el token.
-    // Optimización: NO hacemos los joins de userRoles/role porque esos datos ya
-    // vienen en el payload del JWT. Esto reduce la consulta a un findFirst simple
-    // (más rápido, sobre todo con el pooler de Supabase que agrega ~1.9s por
-    // consulta con joins).
-    const user = await this.prisma.user.findFirst({
-      where: {
-        id: BigInt(payload.sub),
-        isActive: true,
-        deletedAt: null, // no está eliminado
-      },
-      select: {
-        id: true,
-        email: true,
-      },
-    });
+    const userId = BigInt(payload.sub);
+    const cacheKey = String(payload.sub);
+    const cached = this.activeUserCache.get(cacheKey);
+    const now = Date.now();
 
-    if (!user) {
-      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    let email: string;
+    if (cached && cached.expiresAt > now) {
+      email = cached.email;
+    } else {
+      // Verificar que el usuario sigue existiendo y está activo.
+      // Un usuario podría haber sido desactivado después de obtener el token.
+      // Optimización: NO hacemos los joins de userRoles/role porque esos datos ya
+      // vienen en el payload del JWT. Esto reduce la consulta a un findFirst simple.
+      const user = await this.prisma.user.findFirst({
+        where: {
+          id: userId,
+          isActive: true,
+          deletedAt: null, // no está eliminado
+        },
+        select: {
+          id: true,
+          email: true,
+        },
+      });
+
+      if (!user) {
+        this.activeUserCache.delete(cacheKey);
+        throw new UnauthorizedException('Usuario no encontrado o inactivo');
+      }
+
+      email = user.email;
+      this.activeUserCache.set(cacheKey, {
+        email,
+        expiresAt: now + JwtStrategy.ACTIVE_CACHE_TTL_MS,
+      });
     }
 
     // schoolId desde el payload del JWT (rápido, sin joins).
@@ -73,7 +99,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       schoolId = BigInt(payload.schoolId);
     } else {
       const role = await this.prisma.userRole.findFirst({
-        where: { userId: user.id },
+        where: { userId },
         select: { schoolId: true },
       });
       schoolId = role?.schoolId ?? undefined;
@@ -83,8 +109,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // Los roles y schoolId se toman del payload del JWT (ya firmados y válidos),
     // no de la BD, para evitar la consulta con joins en cada request.
     return {
-      sub: user.id,
-      email: user.email,
+      sub: userId,
+      email,
       roles: payload.roles ?? [],
       schoolId,
     };
