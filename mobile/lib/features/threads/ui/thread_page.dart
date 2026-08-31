@@ -72,6 +72,14 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   bool _loadingFirstTime = false;
   bool _sending = false;
   String? _error;
+  // Este ScrollController recién nace con la pantalla — su PRIMER
+  // posicionamiento siempre debe ser instantáneo (sin animar), tenga o no
+  // datos cacheados `_messages` de una visita anterior a este mismo hilo.
+  // Antes se usaba `_messages == null` para detectar "primera vez", pero
+  // eso es incorrecto: con la caché en memoria, la segunda visita a la
+  // MISMA conversación ya arranca con `_messages` no-nulo y de todos
+  // modos necesita el salto instantáneo (el scroll es nuevo).
+  bool _hasScrolledOnce = false;
 
   // ── Autocompletado de "@" ──────────────────────────────────
   Timer? _mentionDebounce;
@@ -130,13 +138,9 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   // primera carga, cuando todavía no hay nada que mostrar.
   Future<void> _load({bool forceScroll = false}) async {
     final shouldScroll = forceScroll || _isNearBottom;
-    // Al entrar a la conversación por primera vez, tiene que aparecer YA
-    // en el final — sin animación. `animateTo` (250ms) es lo que causaba
-    // el "salto" visible de mensajes de arriba bajando hasta el actual;
-    // eso solo tiene sentido cuando ya se está mirando el chat y llega
-    // uno nuevo, no al abrir.
-    final isFirstLoad = _messages == null;
-    if (isFirstLoad) setState(() => _loadingFirstTime = true);
+    // El spinner de pantalla completa solo si de verdad no hay nada que
+    // mostrar todavía (ni siquiera de la caché).
+    if (_messages == null) setState(() => _loadingFirstTime = true);
     try {
       final msgs = await _repo.getMessages(widget.threadId);
       _cache[widget.threadId] = msgs;
@@ -147,8 +151,13 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
         _loadingFirstTime = false;
       });
       if (shouldScroll) {
+        // El PRIMER posicionamiento de este scroll siempre es instantáneo
+        // (jumpTo) — animar (250ms) recién tiene sentido de ahí en más,
+        // cuando ya se está mirando el chat y llega un mensaje nuevo.
+        final animate = _hasScrolledOnce;
+        _hasScrolledOnce = true;
         WidgetsBinding.instance
-            .addPostFrameCallback((_) => _scrollToBottom(animate: !isFirstLoad));
+            .addPostFrameCallback((_) => _scrollToBottom(animate: animate));
       }
     } catch (e) {
       if (!mounted) return;
