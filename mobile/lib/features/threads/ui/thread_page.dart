@@ -180,11 +180,20 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
 
     final upToCursor = text.substring(0, cursor);
     final at = upToCursor.lastIndexOf('@');
-    if (at == -1 || upToCursor.substring(at + 1).contains(RegExp(r'[\s\]]'))) {
+    if (at == -1) return _clearMentions();
+    final afterAt = upToCursor.substring(at + 1);
+    // Los títulos de tarea suelen tener varias palabras ("Tarea de
+    // mañana: ejercicios de fracciones") — un espacio simple NO corta la
+    // búsqueda (antes sí, y por eso buscar "mi calendario" nunca
+    // encontraba nada: se cortaba en "mi"). Sí corta si la mención ya
+    // quedó cerrada con `]` (una insertada antes en el mismo mensaje), si
+    // hay un salto de línea, o como tope de seguridad si el texto después
+    // del @ ya es demasiado largo para ser un título.
+    if (afterAt.contains(']') || afterAt.contains('\n') || afterAt.length > 60) {
       return _clearMentions();
     }
 
-    final query = upToCursor.substring(at + 1);
+    final query = afterAt;
     _mentionStart = at;
     _mentionDebounce?.cancel();
     _mentionDebounce = Timer(const Duration(milliseconds: 250), () async {
