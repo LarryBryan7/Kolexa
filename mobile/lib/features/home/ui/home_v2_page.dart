@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../../core/widgets/notification_banner.dart';
+import '../../../core/widgets/press_tint.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
 import '../../notifications/ui/notification_onboarding_page.dart';
@@ -99,85 +100,6 @@ class _Child {
     this.age,
     this.avatarUrl,
   });
-}
-
-// Tono "presionado" de una card: en vez del gris plano por defecto de
-// Material (que no combina con cards de color propio, ej. el ámbar de
-// "Urgente para hoy"), desatura y oscurece levemente el color base de
-// CADA card para usarlo como splash/highlight de su InkWell — así el
-// estado seleccionado se ve como una versión grisácea del color
-// original, no un gris genérico sin relación con la tarjeta.
-Color _pressedTint(Color base) {
-  final hsl = HSLColor.fromColor(base);
-  return hsl
-      .withSaturation((hsl.saturation * 0.65).clamp(0.0, 1.0))
-      .withLightness((hsl.lightness * 0.85).clamp(0.0, 1.0))
-      .toColor()
-      .withValues(alpha: 0.35);
-}
-
-// Feedback de "presionado" hecho a mano (sin InkWell): el fade interno
-// de Material no se puede afinar (entra y sale con el mismo timing
-// fijo), y el toque se sentía poco "limpio". Acá se controla el propio
-// estado con TapDown/TapUp/TapCancel: entra rápido (100ms) y sale más
-// lento (350ms), para que el tinte se sienta un poco más sostenido en
-// vez de desaparecer de golpe al soltar.
-class _PressTint extends StatefulWidget {
-  final Widget child;
-  final Color tintColor;
-  final BorderRadius borderRadius;
-  final VoidCallback? onTap;
-
-  const _PressTint({
-    required this.child,
-    required this.tintColor,
-    required this.borderRadius,
-    this.onTap,
-  });
-
-  @override
-  State<_PressTint> createState() => _PressTintState();
-}
-
-class _PressTintState extends State<_PressTint> {
-  bool _pressed = false;
-
-  void _setPressed(bool value) {
-    if (_pressed != value) setState(() => _pressed = value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      // Por defecto GestureDetector solo responde donde hay contenido
-      // "opaco" debajo (deferToChild) — deja zonas muertas en paddings
-      // y espacios vacíos. InkWell, en cambio, cubre TODA el área del
-      // widget; con `opaque` igualamos ese comportamiento.
-      behavior: HitTestBehavior.opaque,
-      onTap: widget.onTap,
-      onTapDown: (_) => _setPressed(true),
-      onTapUp: (_) => _setPressed(false),
-      onTapCancel: () => _setPressed(false),
-      // Un solo AnimatedContainer envolviendo el contenido (nada de
-      // Stack): así el ancho/alto siguen viniendo del padre y del
-      // propio contenido exactamente igual que un Container normal —
-      // un Stack (con StackFit.loose o .expand) rompía el centrado o
-      // el alto automático de la tarjeta.
-      child: AnimatedContainer(
-        // Al presionar: cambio INSTANTÁNEO (sin transición) — el
-        // usuario tiene que ver de inmediato que está seleccionando
-        // algo, sin esperar ningún fade. Se mantiene fijo mientras
-        // sigue tocando. Recién al soltar se anima (350ms) la salida.
-        duration: Duration(milliseconds: _pressed ? 0 : 350),
-        curve: Curves.easeOut,
-        decoration: BoxDecoration(
-          color: _pressed ? widget.tintColor : widget.tintColor.withValues(alpha: 0),
-          borderRadius: widget.borderRadius,
-        ),
-        child: widget.child,
-      ),
-    );
-  }
 }
 
 String _initials(String first, String last) {
@@ -1433,9 +1355,9 @@ class _NovedadesCardState extends State<_NovedadesCard>
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: _PressTint(
+      child: PressTint(
         borderRadius: BorderRadius.circular(20),
-      tintColor: _pressedTint(Colors.white),
+      tintColor: pressedTint(Colors.white),
       onTap: _openDetail,
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -2052,11 +1974,11 @@ class _UrgentCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: const Color(0xFFFAD973), width: 1.2),
       ),
-      child: _PressTint(
+      child: PressTint(
         borderRadius: BorderRadius.circular(20),
       // Ámbar más saturado que el fondo (que es un crema muy pálido) —
       // así el "presionado" se ve como un ámbar apagado, no gris puro.
-      tintColor: _pressedTint(const Color(0xFFFAD973)),
+      tintColor: pressedTint(const Color(0xFFFAD973)),
       onTap: () => Navigator.of(context, rootNavigator: true).push(
         MaterialPageRoute(
           builder: (_) => PendientesPage(
@@ -2232,9 +2154,9 @@ class _EstaSemanRowState extends State<_EstaSemanRow> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: _PressTint(
+      child: PressTint(
         borderRadius: BorderRadius.circular(20),
-      tintColor: _pressedTint(Colors.white),
+      tintColor: pressedTint(Colors.white),
       onTap: () => Navigator.push(
         context,
         MaterialPageRoute(
@@ -2336,9 +2258,9 @@ class _AccesosRapidos extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
         ),
-        child: _PressTint(
+        child: PressTint(
           borderRadius: BorderRadius.circular(16),
-          tintColor: _pressedTint(Colors.white),
+          tintColor: pressedTint(Colors.white),
           // TODO: sin destino todavía — solo feedback visual al tocar.
           onTap: () {},
           child: Padding(
