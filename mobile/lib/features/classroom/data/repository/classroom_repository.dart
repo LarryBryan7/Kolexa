@@ -147,10 +147,15 @@ class UpcomingStatus {
 class ParentHomeData {
   final TodaySummary todaySummary;
   final UpcomingStatus upcomingStatus;
+  // Firmada de nuevo en cada /parent/home (vence en 1h) — antes solo se
+  // firmaba en el login, así que una sesión abierta más de 1h se quedaba
+  // con una URL vencida y la foto del hijo desaparecía del home.
+  final String? avatarUrl;
 
   const ParentHomeData({
     required this.todaySummary,
     required this.upcomingStatus,
+    this.avatarUrl,
   });
 
   factory ParentHomeData.fromJson(Map<String, dynamic> json) {
@@ -159,6 +164,7 @@ class ParentHomeData {
           json['todaySummary'] as Map<String, dynamic>? ?? {}),
       upcomingStatus: UpcomingStatus.fromJson(
           json['upcomingStatus'] as Map<String, dynamic>? ?? {}),
+      avatarUrl: json['avatarUrl'] as String?,
     );
   }
 }

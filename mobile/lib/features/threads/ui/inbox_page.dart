@@ -27,12 +27,21 @@ class InboxPage extends StatefulWidget {
 }
 
 class _InboxPageState extends State<InboxPage> {
-  late Future<List<ThreadSummary>> _future;
+  // Cache en memoria a nivel de clase: sobrevive a que esta pantalla se
+  // destruya y se vuelva a crear (ej. al cambiar de pestaña y volver), así
+  // que reabrir Chats muestra la última lista conocida al instante, sin
+  // loader — se refresca sola en segundo plano.
+  static List<ThreadSummary>? _cachedThreads;
+
+  List<ThreadSummary>? _threads;
+  bool _loadingFirstTime = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _threads = _cachedThreads;
+    _refresh(showErrorIfEmpty: true);
     PushNotificationsService.instance.addDataRefreshListener(_handleDataRefresh);
   }
 
@@ -47,18 +56,39 @@ class _InboxPageState extends State<InboxPage> {
   // falta salir y volver a entrar a la pestaña.
   void _handleDataRefresh(Map<String, dynamic> data) {
     if (!mounted || data['screen'] != 'thread') return;
-    _onRefresh();
+    _refresh();
   }
 
-  void _load() {
-    final repo = ThreadsRepository(context.read<ApiClient>());
-    _future = repo.getInbox();
+  // Refresco silencioso: nunca borra `_threads` antes de tener el
+  // resultado nuevo, así la lista ya cargada se queda visible en pantalla
+  // mientras se pide de nuevo (a diferencia de un FutureBuilder, que
+  // vuelve a mostrar el loader cada vez que se reemplaza el Future). El
+  // spinner de pantalla completa solo aparece si de verdad no hay nada
+  // que mostrar todavía.
+  Future<void> _refresh({bool showErrorIfEmpty = false}) async {
+    if (_threads == null) setState(() => _loadingFirstTime = true);
+    try {
+      final repo = ThreadsRepository(context.read<ApiClient>());
+      final threads = await repo.getInbox();
+      _cachedThreads = threads;
+      if (!mounted) return;
+      setState(() {
+        _threads = threads;
+        _error = null;
+        _loadingFirstTime = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingFirstTime = false);
+      // Un refresh silencioso que falla no debe tapar la lista ya cargada
+      // con una pantalla de error — solo se muestra si no hay nada.
+      if (showErrorIfEmpty && _threads == null) {
+        setState(() => _error = e.toString());
+      }
+    }
   }
 
-  Future<void> _onRefresh() async {
-    setState(_load);
-    await _future;
-  }
+  Future<void> _onRefresh() => _refresh(showErrorIfEmpty: true);
 
   Future<void> _openNewMessage() async {
     final opened = await Navigator.of(context).push<bool>(
@@ -107,30 +137,29 @@ class _InboxPageState extends State<InboxPage> {
           child: RefreshIndicator(
             color: _kPrimary,
             onRefresh: _onRefresh,
-            child: FutureBuilder<List<ThreadSummary>>(
-              future: _future,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
+            child: Builder(builder: (context) {
+              if (_threads == null) {
+                if (_loadingFirstTime) {
                   return const Center(child: CircularProgressIndicator(color: _kPrimary));
                 }
-                if (snapshot.hasError) {
+                if (_error != null) {
                   return _ErrorState(onRetry: _onRefresh);
                 }
-                final threads = snapshot.data ?? [];
-                if (threads.isEmpty) {
-                  return _EmptyState(onNewMessage: _openNewMessage);
-                }
-                return ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  itemCount: threads.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, i) => _ThreadRow(
-                    thread: threads[i],
-                    onTap: () => _openThread(threads[i]),
-                  ),
-                );
-              },
-            ),
+              }
+              final threads = _threads ?? [];
+              if (threads.isEmpty) {
+                return _EmptyState(onNewMessage: _openNewMessage);
+              }
+              return ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
+                itemCount: threads.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, i) => _ThreadRow(
+                  thread: threads[i],
+                  onTap: () => _openThread(threads[i]),
+                ),
+              );
+            }),
           ),
         ),
       ],
