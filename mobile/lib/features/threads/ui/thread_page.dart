@@ -38,6 +38,54 @@ const _kTextGray = Color(0xFF666666);
 // si la tarea cambia (fecha, entregada) el destino sigue siendo el actual.
 final RegExp _mentionRe = RegExp(r'@\[(.*?)\]\((homework|gc-coursework):(\d+)\)');
 
+// Controller que, mientras se compone el mensaje, PINTA el markup de una
+// mención como un chip compacto ("@Título") en vez del texto crudo
+// "@[Título](tipo:id)" — sin tocar el texto real: `text`/`selection`
+// siguen siendo el markup completo (lo que de verdad se manda al enviar),
+// solo cambia lo que EditableText dibuja en pantalla. Es la forma
+// soportada por Flutter de mezclar un widget dentro de un campo de texto
+// editable: TextEditingController.buildTextSpan() puede devolver
+// WidgetSpan, no solo TextSpan de texto plano.
+class _MentionComposerController extends TextEditingController {
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    final source = text;
+    final spans = <InlineSpan>[];
+    int last = 0;
+    for (final m in _mentionRe.allMatches(source)) {
+      if (m.start > last) {
+        spans.add(TextSpan(text: source.substring(last, m.start), style: style));
+      }
+      spans.add(WidgetSpan(
+        alignment: PlaceholderAlignment.middle,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: _kPrimaryLt,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            '📋 ${m.group(1)}',
+            style: (style ?? const TextStyle()).copyWith(
+              color: _kPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ));
+      last = m.end;
+    }
+    if (last < source.length) {
+      spans.add(TextSpan(text: source.substring(last), style: style));
+    }
+    return TextSpan(style: style, children: spans);
+  }
+}
+
 class ThreadPage extends StatefulWidget {
   final String threadId;
   final String title;
@@ -66,7 +114,7 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   late final ThreadsRepository _repo;
   late final int _myUserId;
   late final List<String> _myRoles;
-  final _controller = TextEditingController();
+  final _controller = _MentionComposerController();
   final _scroll = ScrollController();
   List<ThreadMessage>? _messages;
   bool _loadingFirstTime = false;
