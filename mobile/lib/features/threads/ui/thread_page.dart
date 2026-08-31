@@ -72,14 +72,6 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   bool _loadingFirstTime = false;
   bool _sending = false;
   String? _error;
-  // Este ScrollController recién nace con la pantalla — su PRIMER
-  // posicionamiento siempre debe ser instantáneo (sin animar), tenga o no
-  // datos cacheados `_messages` de una visita anterior a este mismo hilo.
-  // Antes se usaba `_messages == null` para detectar "primera vez", pero
-  // eso es incorrecto: con la caché en memoria, la segunda visita a la
-  // MISMA conversación ya arranca con `_messages` no-nulo y de todos
-  // modos necesita el salto instantáneo (el scroll es nuevo).
-  bool _hasScrolledOnce = false;
 
   // ── Autocompletado de "@" ──────────────────────────────────
   Timer? _mentionDebounce;
@@ -120,26 +112,25 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) _load();
   }
 
-  // true si el usuario ya está viendo el final de la conversación (o
-  // todavía no se renderizó nada). Se usa para decidir si un refresh
-  // silencioso puede bajar el scroll solo o si el usuario está leyendo
-  // mensajes viejos y no hay que moverle la pantalla de abajo del asiento.
-  bool get _isNearBottom {
-    if (!_scroll.hasClients) return true;
-    final position = _scroll.position;
-    return position.pixels >= position.maxScrollExtent - 80;
-  }
-
   // Refresco que nunca borra `_messages` antes de tener el resultado
   // nuevo: la conversación ya cargada se queda visible mientras se pide de
   // nuevo (a diferencia del FutureBuilder anterior, que volvía a mostrar
   // el loader — y tapaba toda la charla — cada vez que llegaba un mensaje
   // nuevo por push). El spinner de pantalla completa solo aparece en la
   // primera carga, cuando todavía no hay nada que mostrar.
+  //
+  // La lista se pinta con `reverse: true` (ver build()): el offset 0 del
+  // scroll siempre corresponde al mensaje más reciente, así que "quedarse
+  // pegado abajo" al llegar un mensaje nuevo es automático — mientras el
+  // usuario no haya scrolleado hacia arriba, no hace falta mover el scroll
+  // a mano, y si sí scrolleó a leer mensajes viejos, tampoco se lo
+  // interrumpe (su offset absoluto no cambia solo porque llegó algo nuevo).
+  // Antes se intentaba "saltar al final" a mano después de cada carga —
+  // eso fue la causa de dos bugs reales: un salto visible animado, y
+  // (con datos ya en caché) un frame de más mostrando el scroll en su
+  // posición por defecto antes de saltar. `reverse: true` elimina el
+  // problema de raíz en vez de parchear el timing otra vez.
   Future<void> _load({bool forceScroll = false}) async {
-    final shouldScroll = forceScroll || _isNearBottom;
-    // El spinner de pantalla completa solo si de verdad no hay nada que
-    // mostrar todavía (ni siquiera de la caché).
     if (_messages == null) setState(() => _loadingFirstTime = true);
     try {
       final msgs = await _repo.getMessages(widget.threadId);
@@ -150,14 +141,11 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
         _error = null;
         _loadingFirstTime = false;
       });
-      if (shouldScroll) {
-        // El PRIMER posicionamiento de este scroll siempre es instantáneo
-        // (jumpTo) — animar (250ms) recién tiene sentido de ahí en más,
-        // cuando ya se está mirando el chat y llega un mensaje nuevo.
-        final animate = _hasScrolledOnce;
-        _hasScrolledOnce = true;
-        WidgetsBinding.instance
-            .addPostFrameCallback((_) => _scrollToBottom(animate: animate));
+      // El único caso que sí necesita empujar el scroll a mano: el propio
+      // usuario acaba de enviar un mensaje (puede estar leyendo historial
+      // arriba) y tiene que ver su mensaje nuevo sí o sí.
+      if (forceScroll) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       }
     } catch (e) {
       if (!mounted) return;
@@ -171,14 +159,13 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
     }
   }
 
-  void _scrollToBottom({bool animate = true}) {
+  void _scrollToBottom() {
     if (!_scroll.hasClients) return;
-    if (!animate) {
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      return;
-    }
+    // Con `reverse: true`, el offset 0 es visualmente el final (el
+    // mensaje más reciente) — no `maxScrollExtent` como en una lista
+    // normal.
     _scroll.animateTo(
-      _scroll.position.maxScrollExtent,
+      0,
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOut,
     );
@@ -375,13 +362,21 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
                 }
                 return ListView.builder(
                     controller: _scroll,
+                    reverse: true,
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     itemCount: messages.length,
-                    itemBuilder: (context, i) => _Bubble(
-                      message: messages[i],
-                      isMine: messages[i].senderId == _myUserId.toString(),
-                      onOpenMention: _openMention,
-                    ),
+                    itemBuilder: (context, i) {
+                      // `messages` sigue en orden cronológico (viejo→nuevo);
+                      // con `reverse: true` el índice 0 de la lista es el
+                      // que se pinta abajo del todo, así que hay que
+                      // invertir el mapeo acá.
+                      final message = messages[messages.length - 1 - i];
+                      return _Bubble(
+                        message: message,
+                        isMine: message.senderId == _myUserId.toString(),
+                        onOpenMention: _openMention,
+                      );
+                    },
                   );
                 },
               ),
