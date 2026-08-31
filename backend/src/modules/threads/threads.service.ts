@@ -410,30 +410,41 @@ export class ThreadsService {
     userId: bigint,
     before?: bigint,
     limit = 30,
-  ): Promise<ThreadMessageView[]> {
+  ): Promise<{ messages: ThreadMessageView[]; otherLastReadAt: Date | null }> {
     await this.assertParticipant(threadId, userId);
 
-    const rows = await this.prisma.threadMessage.findMany({
-      where: {
-        threadId,
-        deletedAt: null,
-        ...(before ? { id: { lt: before } } : {}),
-      },
-      orderBy: { id: 'desc' },
-      take: limit,
-      select: {
-        id: true,
-        senderId: true,
-        body: true,
-        sentAt: true,
-        editedAt: true,
-        sender: { select: { firstName: true, lastName: true } },
-      },
-    });
+    // El "doble check" de leído se arma en el cliente comparando el
+    // `sentAt` de cada mensaje propio contra esto — no hay una tabla de
+    // "leído por mensaje", el hilo ya guarda un solo `lastReadAt` por
+    // participante (ver auditoría de mensajería: no-leído nunca se
+    // cuenta por fila, se compara). Ambas consultas son independientes.
+    const [rows, otherParticipant] = await Promise.all([
+      this.prisma.threadMessage.findMany({
+        where: {
+          threadId,
+          deletedAt: null,
+          ...(before ? { id: { lt: before } } : {}),
+        },
+        orderBy: { id: 'desc' },
+        take: limit,
+        select: {
+          id: true,
+          senderId: true,
+          body: true,
+          sentAt: true,
+          editedAt: true,
+          sender: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      this.prisma.threadParticipant.findFirst({
+        where: { threadId, userId: { not: userId } },
+        select: { lastReadAt: true },
+      }),
+    ]);
 
     // Se pidieron descendente (para el cursor "antes de X"), se devuelven en
     // orden cronológico para pintarlas directo en la pantalla.
-    return rows.reverse().map((m) => ({
+    const messages = rows.reverse().map((m) => ({
       id: m.id.toString(),
       senderId: m.senderId.toString(),
       senderName: `${m.sender.firstName} ${m.sender.lastName ?? ''}`.trim(),
@@ -441,6 +452,8 @@ export class ThreadsService {
       sentAt: m.sentAt,
       editedAt: m.editedAt,
     }));
+
+    return { messages, otherLastReadAt: otherParticipant?.lastReadAt ?? null };
   }
 
   // Formato de mención: "@[Título de la tarea](homework:123)" para tareas
