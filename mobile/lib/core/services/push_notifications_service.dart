@@ -138,6 +138,13 @@ class PushNotificationsService {
   Future<void> _refreshToken() async {
     try {
       _fcmToken = await _messaging.getToken();
+      // También se dispara en el fetch inicial (no solo en rotaciones reales
+      // de `onTokenRefresh` más abajo): si la sesión ya estaba restaurada al
+      // arrancar (login previo), este es el único momento en que se conoce
+      // el token vigente, y sin este call nunca se resincroniza con el
+      // backend hasta el próximo login manual.
+      final token = _fcmToken;
+      if (token != null) onTokenRefresh?.call(token);
     } catch (_) {
       // Sin Google Play Services (emuladores sin GMS) — ignorar
     }

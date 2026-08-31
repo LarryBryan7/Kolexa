@@ -66,6 +66,16 @@ class AuthRemoteDataSource {
     return LoginResponse.fromJson(response.data as Map<String, dynamic>);
   }
 
+  // ── syncPushToken ─────────────────────────────────────────
+  // El token FCM antes solo se guardaba al loguearse — si cambia con la
+  // sesión ya activa (reinstalar la app, rotación normal de Firebase), no
+  // había forma de resincronizarlo hasta el siguiente login, y el push
+  // quedaba muerto en silencio. Se llama al arrancar con sesión ya
+  // restaurada y cuando Firebase avisa que el token rotó.
+  Future<void> syncPushToken(String firebaseToken) async {
+    await _client.post('auth/push-token', data: {'firebaseToken': firebaseToken});
+  }
+
   // ── loginWithGoogle ───────────────────────────────────────
   // Inicio de sesión/registro con Google Sign-In (Fase 1).
   //

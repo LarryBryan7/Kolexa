@@ -81,6 +81,13 @@ class _KolexaAppState extends State<KolexaApp> {
     // cuando el usuario toca una notificación, lo llevamos a la pantalla
     // correspondiente según el campo `screen` que envía el backend.
     PushNotificationsService.instance.onNotificationTap = _handleNotificationTap;
+
+    // Resincroniza el token FCM con el backend sin necesitar un login nuevo:
+    // se dispara tanto en el fetch inicial (sesión ya restaurada al abrir la
+    // app) como en una rotación real de Firebase durante la sesión. Antes el
+    // token solo se guardaba en el login, así que reinstalar la app o una
+    // rotación normal de Firebase dejaba el push muerto en silencio.
+    PushNotificationsService.instance.onTokenRefresh = authRepository.syncPushToken;
   }
 
   // Decide a dónde navegar cuando el usuario toca una notificación.
