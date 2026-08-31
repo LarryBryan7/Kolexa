@@ -43,6 +43,16 @@ class AuthRepository {
     return loginResponse.user;
   }
 
+  // Resincroniza el token FCM sin loguearse de nuevo — ver
+  // AuthRemoteDataSource.syncPushToken. Se traga el error a propósito: es
+  // una mejora de best-effort, nunca debe romper el arranque de la app ni
+  // el flujo de que Firebase avise un token nuevo.
+  Future<void> syncPushToken(String firebaseToken) async {
+    try {
+      await _remoteDataSource.syncPushToken(firebaseToken);
+    } catch (_) {}
+  }
+
   // ── loginWithGoogle ───────────────────────────────────────
   // Inicio de sesión/registro con Google Sign-In (Fase 1).
   // Recibe el ID Token de Google, lo envía al backend y guarda la sesión.

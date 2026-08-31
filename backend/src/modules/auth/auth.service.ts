@@ -1084,7 +1084,13 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  private async savePushToken(userId: bigint, token: string) {
+  // Público (no `private`): además de usarse en login/register/google-login,
+  // lo llama el endpoint POST /auth/push-token — necesario porque el token
+  // FCM puede cambiar sin que el usuario vuelva a loguearse (reinstalar la
+  // app, rotación normal de Firebase) y antes no había forma de
+  // resincronizarlo salvo un login nuevo, dejando pushes muertos hasta
+  // entonces sin que nada lo avisara.
+  async savePushToken(userId: bigint, token: string) {
     await this.prisma.pushToken.upsert({
       where: { token },
       create: { userId, token, platform: 'android' },

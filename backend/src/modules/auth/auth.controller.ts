@@ -116,6 +116,24 @@ export class AuthController {
     return this.authService.logout(BigInt(user.sub), firebaseToken, refreshToken);
   }
 
+  // ── POST /api/v1/auth/push-token ───────────────────────
+  // Resincroniza el token FCM sin necesitar un login nuevo. El token solo
+  // se guardaba al loguearse — si cambia mientras la sesión sigue activa
+  // (reinstalar la app, rotación normal de Firebase), el push quedaba
+  // muerto en silencio hasta el siguiente login. El cliente lo llama al
+  // arrancar (si ya hay sesión) y cuando Firebase avisa que el token
+  // rotó (onTokenRefresh).
+  @Post('push-token')
+  @HttpCode(HttpStatus.OK)
+  async syncPushToken(
+    @CurrentUser() user: UserPayload,
+    @Body('firebaseToken') firebaseToken?: string,
+  ) {
+    if (!firebaseToken) return { ok: false };
+    await this.authService.savePushToken(BigInt(user.sub), firebaseToken);
+    return { ok: true };
+  }
+
   // ── POST /api/v1/auth/change-password ─────────────────
   @Post('change-password')
   @HttpCode(HttpStatus.OK)
