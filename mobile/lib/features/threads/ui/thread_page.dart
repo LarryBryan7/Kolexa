@@ -428,8 +428,28 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
     try {
       await _repo.sendMessage(widget.threadId, body);
       if (!mounted) return;
-      setState(() => _pendingMessages = _pendingMessages.where((m) => m.id != tempId).toList());
-      await _load(forceScroll: true);
+      // Traer el mensaje real ANTES de sacar el pendiente, y aplicar los
+      // dos cambios en el MISMO setState: si se sacara el pendiente
+      // primero y recién después se pidiera la lista confirmada, hay un
+      // frame de por medio donde el mensaje no está en ninguna de las
+      // dos listas — se ve como que la burbuja parpadea (se esconde y
+      // vuelve a aparecer) en vez de solo cambiar el reloj por el check.
+      try {
+        final page = await _repo.getMessages(widget.threadId);
+        _cache[widget.threadId] = page;
+        if (!mounted) return;
+        setState(() {
+          _messages = page.messages;
+          _otherLastReadAt = page.otherLastReadAt;
+          _pendingMessages = _pendingMessages.where((m) => m.id != tempId).toList();
+        });
+      } catch (_) {
+        // El mensaje ya se mandó bien (sendMessage no tiró error) — si
+        // este refresco puntual falla, se deja la burbuja pendiente tal
+        // cual; el próximo refresh (push o resume) la termina de
+        // reconciliar solo, sin marcarla como fallida sin serlo.
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     } catch (e) {
       if (!mounted) return;
       setState(() {
