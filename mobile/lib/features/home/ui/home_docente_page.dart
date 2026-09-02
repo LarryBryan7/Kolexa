@@ -95,8 +95,30 @@ class _HomeDocentePageState extends State<HomeDocentePage>
     with WidgetsBindingObserver {
   int _navIndex = 0;
   late Future<TeacherHomeData> _homeDataFuture;
+  // Mismo problema que _lastPendingCount/_lastConnected, en el
+  // FutureBuilder más grande: sin esto, reasignar _homeDataFuture (mismo
+  // sync automático al abrir el home) hacía que TODO el contenido de la
+  // pantalla (saludo, salón, horario, pendientes) se reseteara a sus
+  // valores por defecto un instante y volviera a aparecer apenas
+  // resolvía — la pantalla entera "parpadeaba" en cada apertura.
+  TeacherHomeData? _lastHomeData;
   late Future<bool> _classroomStatusFuture;
   late Future<int> _pendingFuture;
+  // Último valor bueno conocido de _pendingFuture: cuando el Future se
+  // reasigna (sync automático, pull-to-refresh), FutureBuilder vuelve a
+  // `waiting` con `data == null` de inmediato — sin esto, la card de
+  // "pendientes" se ocultaba un instante (count caía a 0) y volvía a
+  // aparecer con el mismo número apenas resolvía, un parpadeo visible
+  // aunque el dato final no hubiera cambiado.
+  int? _lastPendingCount;
+  // Mismo problema que _lastPendingCount, pero acá el impacto es mayor:
+  // este FutureBuilder es el que decide si se muestra TODA la sección de
+  // horario + pendientes + accesos — al reasignar _classroomStatusFuture
+  // (mismo sync automático), volvía a `waiting` y ocultaba todo ese
+  // bloque de golpe hasta que resolvía, así que en la práctica se veía
+  // como que la pantalla entera "parpadeaba" al abrir el home.
+  bool? _lastConnected;
+  List<ScheduleSlot>? _lastSchedule; // mismo patrón, ver _lastPendingCount
   late Future<List<ScheduleSlot>> _scheduleFuture;
   bool _waitingClassroomConfirm = false;
   // Guard de reentrada (equivale a Mejora D del padre): evita syncs a Google
@@ -330,7 +352,8 @@ class _HomeDocentePageState extends State<HomeDocentePage>
                     child: FutureBuilder<TeacherHomeData>(
                       future: _homeDataFuture,
                       builder: (context, snapshot) {
-                        final data = snapshot.data;
+                        if (snapshot.hasData) _lastHomeData = snapshot.data;
+                        final data = _lastHomeData;
                         final classroom = data?.classrooms.length == 1
                             ? data!.classrooms.first
                             : null;
@@ -411,10 +434,13 @@ class _HomeDocentePageState extends State<HomeDocentePage>
                                 const SizedBox(height: 10),
                                 FutureBuilder<List<ScheduleSlot>>(
                                   future: _scheduleFuture,
-                                  builder: (ctx, sSnap) => _HorarioRow(
-                                    slots: sSnap.data ?? [],
-                                    now: now,
-                                  ),
+                                  builder: (ctx, sSnap) {
+                                    if (sSnap.hasData) _lastSchedule = sSnap.data;
+                                    return _HorarioRow(
+                                      slots: _lastSchedule ?? [],
+                                      now: now,
+                                    );
+                                  },
                                 ),
                                 const SizedBox(height: 12),
                               ],
@@ -423,8 +449,8 @@ class _HomeDocentePageState extends State<HomeDocentePage>
                               FutureBuilder<bool>(
                                 future: _classroomStatusFuture,
                                 builder: (context, snap) {
-                                  if (snap.connectionState == ConnectionState.waiting ||
-                                      snap.data != true) {
+                                  if (snap.hasData) _lastConnected = snap.data;
+                                  if (_lastConnected != true) {
                                     return const SizedBox.shrink();
                                   }
                                   return Column(
@@ -434,7 +460,8 @@ class _HomeDocentePageState extends State<HomeDocentePage>
                                       FutureBuilder<int>(
                                         future: _pendingFuture,
                                         builder: (context, pendSnap) {
-                                          final count = pendSnap.data ?? 0;
+                                          if (pendSnap.hasData) _lastPendingCount = pendSnap.data;
+                                          final count = _lastPendingCount ?? 0;
                                           if (count == 0) return const SizedBox.shrink();
                                           return Column(
                                             crossAxisAlignment: CrossAxisAlignment.start,
