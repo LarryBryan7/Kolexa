@@ -550,7 +550,17 @@ describe('ThreadsService — bandeja y no-leído', () => {
 describe('ThreadsService — acceso a un hilo por participación', () => {
   it('quien no participa no puede leer ni enviar mensajes (404, no 403 — no confirma que el hilo existe)', async () => {
     const { service } = makeService({
-      threadParticipant: { findUnique: jest.fn().mockResolvedValue(null), findMany: jest.fn(), createMany: jest.fn(), update: jest.fn() },
+      threadParticipant: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn(),
+        // getMessages ahora dispara assertParticipant EN PARALELO con estas
+        // otras dos consultas (ver comentario en threads.service.ts) — se
+        // llaman igual aunque assertParticipant termine rechazando, así
+        // que el mock necesita existir como función.
+        findFirst: jest.fn(),
+        createMany: jest.fn(),
+        update: jest.fn(),
+      },
     });
     await expect(service.getMessages(1n, 999n)).rejects.toThrow(NotFoundException);
     await expect(service.sendMessage(1n, 999n, 'hola')).rejects.toThrow(NotFoundException);
@@ -702,6 +712,63 @@ describe('ThreadsService.getMessages — paginación', () => {
     const result = await service.getMessages(1n, PARENT.id);
     expect(result.otherLastReadAt).toBeNull();
     expect(result.otherLastActiveAt).toEqual(activeAt);
+  });
+
+  it('assertParticipant corre en paralelo con las otras dos consultas, no antes (perf: 1 sola etapa, no 2)', async () => {
+    const order: string[] = [];
+    const findUnique = jest.fn().mockImplementation(async () => {
+      order.push('assertParticipant:start');
+      return { thread: { closedAt: null } };
+    });
+    const findManyMessages = jest.fn().mockImplementation(async () => {
+      order.push('messages:start');
+      return [];
+    });
+    const findFirstParticipant = jest.fn().mockImplementation(async () => {
+      order.push('otherParticipant:start');
+      return { lastReadAt: null, user: { lastActiveAt: null } };
+    });
+    const { service } = makeService({
+      threadParticipant: {
+        findUnique,
+        findFirst: findFirstParticipant,
+        findMany: jest.fn(),
+        createMany: jest.fn(),
+        update: jest.fn(),
+      },
+      threadMessage: { findMany: findManyMessages, create: jest.fn() },
+    });
+
+    await service.getMessages(1n, PARENT.id);
+
+    // Las 3 arrancan ANTES de que cualquiera termine — si `assertParticipant`
+    // se esperara primero (como antes), las otras dos ni se habrían llamado
+    // todavía en este punto.
+    expect(order).toEqual(['assertParticipant:start', 'messages:start', 'otherParticipant:start']);
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(findManyMessages).toHaveBeenCalledTimes(1);
+    expect(findFirstParticipant).toHaveBeenCalledTimes(1);
+  });
+
+  it('si no soy participante, sigue lanzando 404 aunque las otras dos consultas ya se hayan disparado en paralelo', async () => {
+    const findManyMessages = jest.fn().mockResolvedValue([]);
+    const findFirstParticipant = jest.fn().mockResolvedValue(null);
+    const { service } = makeService({
+      threadParticipant: {
+        findUnique: jest.fn().mockResolvedValue(null), // no participa
+        findFirst: findFirstParticipant,
+        findMany: jest.fn(),
+        createMany: jest.fn(),
+        update: jest.fn(),
+      },
+      threadMessage: { findMany: findManyMessages, create: jest.fn() },
+    });
+
+    await expect(service.getMessages(1n, 999n)).rejects.toThrow(NotFoundException);
+    // Se dispararon igual (se corrieron en paralelo) — el punto es que el
+    // resultado nunca llega a usarse para construir una respuesta.
+    expect(findManyMessages).toHaveBeenCalledTimes(1);
+    expect(findFirstParticipant).toHaveBeenCalledTimes(1);
   });
 });
 
