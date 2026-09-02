@@ -113,35 +113,31 @@ export class ThreadsService {
 
     if (parts.length === 0) return [];
 
-    // Un query aparte para el último mensaje de cada hilo, en vez de un N+1
-    // por hilo: se traen todos y se agrupa en memoria (la bandeja de un
-    // usuario nunca tiene miles de hilos).
+    // Un solo query para TODOS los mensajes de estos hilos, en vez de un
+    // N+1 por hilo: se agrupa en memoria (la bandeja de un usuario nunca
+    // tiene miles de hilos). Sirve para dos cosas a la vez — el último
+    // mensaje de cada hilo, Y el badge numérico de no-leídos (mensajes de
+    // la OTRA persona posteriores a `lastReadAt`, que varía por hilo y no
+    // se puede expresar en un WHERE de groupBy) — antes eran dos queries
+    // separadas y secuenciales pidiendo prácticamente lo mismo; contra un
+    // pooler cross-región (Railway US East ↔ Supabase São Paulo) cada
+    // round-trip de más se siente (~350-400ms).
     const threadIds = parts.map((p) => p.thread.id);
-    const lastMessages = await this.prisma.threadMessage.findMany({
+    const allMessages = await this.prisma.threadMessage.findMany({
       where: { threadId: { in: threadIds }, deletedAt: null },
       orderBy: { sentAt: 'desc' },
       select: { threadId: true, body: true, senderId: true, sentAt: true },
     });
-    const lastByThread = new Map<string, (typeof lastMessages)[number]>();
-    for (const m of lastMessages) {
+    const lastByThread = new Map<string, (typeof allMessages)[number]>();
+    const sentAtsByThread = new Map<string, Date[]>();
+    for (const m of allMessages) {
       const key = m.threadId.toString();
       if (!lastByThread.has(key)) lastByThread.set(key, m);
-    }
-
-    // Para el badge numérico: mensajes de LA OTRA persona (nunca los
-    // propios) por hilo, livianos (solo threadId+sentAt) — se comparan en
-    // memoria contra el `lastReadAt` de ESE hilo, que ya varía por hilo y
-    // no se puede expresar en un solo WHERE de groupBy.
-    const otherMessages = await this.prisma.threadMessage.findMany({
-      where: { threadId: { in: threadIds }, deletedAt: null, senderId: { not: userId } },
-      select: { threadId: true, sentAt: true },
-    });
-    const sentAtsByThread = new Map<string, Date[]>();
-    for (const m of otherMessages) {
-      const key = m.threadId.toString();
-      const arr = sentAtsByThread.get(key);
-      if (arr) arr.push(m.sentAt);
-      else sentAtsByThread.set(key, [m.sentAt]);
+      if (m.senderId !== userId) {
+        const arr = sentAtsByThread.get(key);
+        if (arr) arr.push(m.sentAt);
+        else sentAtsByThread.set(key, [m.sentAt]);
+      }
     }
 
     return parts
