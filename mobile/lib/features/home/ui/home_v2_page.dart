@@ -595,7 +595,12 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
                 child: _navIndex == 3
                   ? const PerfilTab(key: ValueKey('perfil'))
                   : _navIndex == 1
-                  ? const InboxPage(key: ValueKey('inbox'))
+                  ? InboxPage(
+                      key: const ValueKey('inbox'),
+                      studentName: children.isEmpty ? null : children[safeIndex].fullName,
+                      studentAvatarUrl: children.isEmpty ? null : children[safeIndex].avatarUrl,
+                      studentInitials: children.isEmpty ? null : children[safeIndex].initials,
+                    )
                   : RefreshIndicator(
                 key: const ValueKey('home'),
                 color: _kPrimary,
