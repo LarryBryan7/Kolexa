@@ -663,22 +663,32 @@ export class ThreadsService {
       }
     }
 
-    const [message] = await this.prisma.$transaction([
-      this.prisma.threadMessage.create({
-        data: { threadId, senderId: userId, body },
-        select: { id: true, sentAt: true },
-      }),
-      this.prisma.thread.update({
-        where: { id: threadId },
-        data: { lastMessageAt: new Date() },
-      }),
-      // Quien escribe da por leído su propio mensaje: sin esto, el hilo le
-      // aparecería a él mismo como "sin leer" justo después de enviarlo.
-      this.prisma.threadParticipant.update({
-        where: { threadId_userId: { threadId, userId } },
-        data: { lastReadAt: new Date() },
-      }),
-    ]);
+    // Antes: this.prisma.$transaction([create, update, update]). Prisma manda
+    // cada paso de un $transaction en array como un round-trip DE RED
+    // separado (BEGIN, INSERT, UPDATE, UPDATE, COMMIT ≈ 5 viajes) — contra
+    // el pooler cross-región (Railway ↔ Supabase São Paulo, ~150-200ms cada
+    // uno) eso solo ya sumaba 1-2s, medido en vivo (markRead, que es 1 sola
+    // escritura, tarda ~0.3s; sendMessage con 3 tardaba 1.1-3.6s). Una sola
+    // sentencia SQL con CTEs hace el INSERT + los 2 UPDATE en un solo viaje.
+    const [result] = await this.prisma.$queryRaw<{ id: string; sent_at: Date }[]>`
+      WITH new_message AS (
+        INSERT INTO thread_messages (thread_id, sender_id, body, sent_at)
+        VALUES (${threadId}, ${userId}, ${body}, now())
+        RETURNING id, sent_at
+      ),
+      thread_update AS (
+        UPDATE threads SET last_message_at = now() WHERE id = ${threadId}
+      )
+      -- Quien escribe da por leído su propio mensaje: sin esto, el hilo le
+      -- aparecería a él mismo como "sin leer" justo después de enviarlo.
+      UPDATE thread_participants
+      SET last_read_at = now()
+      WHERE thread_id = ${threadId} AND user_id = ${userId}
+      RETURNING
+        (SELECT id::text FROM new_message) AS id,
+        (SELECT sent_at FROM new_message) AS sent_at
+    `;
+    const message = { id: result.id, sentAt: result.sent_at };
 
     // Push a los demás participantes, salvo que hayan silenciado el hilo.
     // Fire-and-forget de verdad: quien envía no debe esperar a que se
@@ -688,7 +698,7 @@ export class ThreadsService {
     // a la respuesta, aunque el push en sí ya era fire-and-forget.
     this.notifyOthers(threadId, userId, body).catch(() => {});
 
-    return { id: message.id.toString(), sentAt: message.sentAt };
+    return { id: message.id, sentAt: message.sentAt };
   }
 
   private async notifyOthers(threadId: bigint, senderId: bigint, body: string) {
