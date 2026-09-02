@@ -59,6 +59,14 @@ dependencies:
   # Los tokens JWT expiran en 1h y el sandbox de Android ya protege los datos.
   shared_preferences: ^2.2.0
 
+  # sqflite: base de datos SQLite local. Se usa para la pestaña de
+  # mensajes (bandeja, conversaciones, contactos) — igual que WhatsApp, la
+  # UI lee de acá primero (disco, instantáneo incluso recién abierta la
+  # app) y el backend solo se consulta para traer lo nuevo en segundo
+  # plano. No requiere configuración nativa extra en Android/iOS.
+  sqflite: ^2.3.3+1
+  path: ^1.9.0
+
   # ── Imágenes ─────────────────────────────────────────────
   # cached_network_image: descarga y cachea imágenes de internet.
   # Muestra un placeholder mientras carga y maneja errores.

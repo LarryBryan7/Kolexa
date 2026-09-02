@@ -25,6 +25,7 @@ import '../../homework/bloc/homework_bloc.dart';
 import '../../homework/data/datasources/homework_remote_datasource.dart';
 import '../../homework/data/repositories/homework_repository.dart';
 import '../../homework/ui/homework_page.dart';
+import '../data/threads_local_store.dart';
 import '../data/threads_repository.dart';
 
 const _kBg = Color(0xFFF7F6F3);
@@ -260,6 +261,14 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
     _messages = _cache[widget.threadId]?.messages;
     _otherLastReadAt = _cache[widget.threadId]?.otherLastReadAt;
     _otherLastActiveAt = _cache[widget.threadId]?.otherLastActiveAt;
+    // Si nunca se abrió este hilo en la sesión actual (cache en memoria
+    // vacío) — o si lo único que hay es el mensaje sintético que adelantó
+    // `seedLastMessage` desde la bandeja — se lee de disco: sobrevive a
+    // que la app se haya cerrado del todo, a diferencia de `_cache`. Si no
+    // se filtrara el caso "solo seed", el mensaje sintético (que SÍ deja
+    // `_messages` no nulo) bloquearía para siempre la lectura del
+    // historial real guardado en disco.
+    if (_messages == null || _isOnlySeed(_messages)) _loadFromDisk();
     _load();
     // Se marca leído al entrar: si el otro responde mientras se lee, el
     // siguiente refresh de la bandeja ya no lo mostrará como pendiente.
@@ -321,11 +330,49 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   // (con datos ya en caché) un frame de más mostrando el scroll en su
   // posición por defecto antes de saltar. `reverse: true` elimina el
   // problema de raíz en vez de parchear el timing otra vez.
+  bool _isOnlySeed(List<ThreadMessage>? messages) =>
+      messages != null && messages.isNotEmpty && messages.every((m) => m.id.startsWith('preview-'));
+
+  // Lectura de disco en paralelo al `_load()` de red: si responde primero
+  // (siempre lo hace, es local) reemplaza el spinner por la última
+  // conversación conocida sin esperar el round-trip a São Paulo.
+  //
+  // Si `seedLastMessage` ya adelantó un mensaje sintético (ver
+  // ThreadPage.seedLastMessage), se conserva SOLO si es más nuevo que el
+  // último mensaje que hay en disco — así no se pierde un mensaje que
+  // llegó mientras el hilo estaba cerrado y todavía no se persistió (ej.
+  // llegó por notificación con la app recién reabierta, sin red todavía
+  // para que `_load()` lo confirme), pero tampoco se duplica el mismo
+  // mensaje una vez que su versión real ya está guardada en disco.
+  Future<void> _loadFromDisk() async {
+    final local = await ThreadsLocalStore.loadThread(widget.threadId);
+    if (!mounted || local == null) return;
+    final hasRealData = _messages != null && !_isOnlySeed(_messages);
+    if (hasRealData) return; // la red (u otra carga) ya trajo algo real
+    final seed = (_messages ?? []).where((m) => m.id.startsWith('preview-'));
+    final lastDiskSentAt = local.messages.isNotEmpty ? local.messages.last.sentAt : null;
+    final keptSeed =
+        seed.where((s) => lastDiskSentAt == null || s.sentAt.isAfter(lastDiskSentAt)).toList();
+    final merged = ThreadMessagesPage(
+      messages: [...local.messages, ...keptSeed],
+      otherLastReadAt: local.otherLastReadAt,
+      otherLastActiveAt: local.otherLastActiveAt,
+    );
+    _cache[widget.threadId] = merged;
+    setState(() {
+      _messages = merged.messages;
+      _otherLastReadAt = merged.otherLastReadAt;
+      _otherLastActiveAt = merged.otherLastActiveAt;
+      _loadingFirstTime = false;
+    });
+  }
+
   Future<void> _load({bool forceScroll = false}) async {
     if (_messages == null) setState(() => _loadingFirstTime = true);
     try {
       final page = await _repo.getMessages(widget.threadId);
       _cache[widget.threadId] = page;
+      ThreadsLocalStore.saveThread(widget.threadId, page);
       if (!mounted) return;
       setState(() {
         _messages = page.messages;
@@ -538,6 +585,7 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
         otherLastReadAt: _otherLastReadAt,
         otherLastActiveAt: _otherLastActiveAt,
       );
+      ThreadsLocalStore.saveMessage(widget.threadId, confirmed);
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     } catch (e) {
       if (!mounted) return;

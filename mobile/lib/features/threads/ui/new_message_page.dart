@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/utils/cached_avatar.dart';
+import '../data/threads_local_store.dart';
 import '../data/threads_repository.dart';
 import 'thread_page.dart';
 
@@ -44,7 +45,19 @@ class _NewMessagePageState extends State<NewMessagePage> {
     super.initState();
     _repo = ThreadsRepository(context.read<ApiClient>());
     _contacts = _cachedContacts;
+    if (_contacts == null) _loadFromDisk();
     _refresh(showErrorIfEmpty: true);
+  }
+
+  // Lectura de disco en paralelo al `_refresh()` de red: a quién le podés
+  // escribir casi no cambia entre sesiones, así que la última lista
+  // conocida (guardada la vez anterior) alcanza para mostrar algo real de
+  // inmediato en vez del spinner, incluso recién abierta la app.
+  Future<void> _loadFromDisk() async {
+    final local = await ThreadsLocalStore.loadContacts();
+    if (!mounted || local.isEmpty || _contacts != null) return;
+    _cachedContacts = local;
+    setState(() => _contacts = local);
   }
 
   // Refresco silencioso: nunca borra `_contacts` antes de tener el
@@ -56,6 +69,7 @@ class _NewMessagePageState extends State<NewMessagePage> {
     try {
       final contacts = await _repo.getContacts();
       _cachedContacts = contacts;
+      ThreadsLocalStore.saveContacts(contacts);
       if (!mounted) return;
       setState(() {
         _contacts = contacts;
