@@ -17,6 +17,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/services/manufacturer_settings_service.dart';
+import '../../../core/utils/cached_avatar.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
@@ -599,7 +600,7 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
                               radius: 18.5,
                               backgroundColor: _kPrimaryLt,
                               backgroundImage: widget.avatarUrl != null
-                                  ? NetworkImage(widget.avatarUrl!)
+                                  ? cachedAvatarProvider(widget.avatarUrl!)
                                   : null,
                               child: widget.avatarUrl == null
                                   ? Text(

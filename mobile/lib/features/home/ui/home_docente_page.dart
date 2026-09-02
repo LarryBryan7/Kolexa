@@ -149,17 +149,20 @@ class _HomeDocentePageState extends State<HomeDocentePage>
         } catch (_) {}
       }
       if (!mounted) return;
-      setState(() {
-        _homeDataFuture = repo.getHomeData();
-        _classroomStatusFuture = _homeDataFuture.then((d) => d.connected);
-        // Solo re-lanzar pending/schedule si el docente está conectado
-        // Y no hubo cache hit. Si no está conectado, los datos de initState ya
-        // son válidos (no hay nada nuevo que sincronizar) → evita duplicados.
-        if (home.connected && !cacheHit) {
-                _pendingFuture = repo.getPendingCount();
+      // Solo re-pedir todo (incluido getHomeData) si el docente está
+      // conectado Y el sync trajo algo nuevo. Antes esta condición solo
+      // protegía a _pendingFuture/_scheduleFuture — getHomeData se volvía
+      // a pedir SIEMPRE (línea suelta afuera del if), duplicando la
+      // request de initState en cada apertura del home, incluso sin
+      // Classroom conectado o con cache hit (nada nuevo que mostrar).
+      if (home.connected && !cacheHit) {
+        setState(() {
+          _homeDataFuture = repo.getHomeData();
+          _classroomStatusFuture = _homeDataFuture.then((d) => d.connected);
+          _pendingFuture = repo.getPendingCount();
           _scheduleFuture = repo.getTodaySchedule();
-        }
-      });
+        });
+      }
     } finally {
       _refreshing = false;
     }

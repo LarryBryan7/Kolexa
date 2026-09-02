@@ -16,6 +16,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/services/push_notifications_service.dart';
+import '../../../core/utils/cached_avatar.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
 import '../data/threads_repository.dart';
@@ -424,7 +425,7 @@ class _SearchBar extends StatelessWidget {
               child: CircleAvatar(
                 radius: 11,
                 backgroundColor: _kPrimaryLt,
-                backgroundImage: studentAvatarUrl != null ? NetworkImage(studentAvatarUrl!) : null,
+                backgroundImage: studentAvatarUrl != null ? cachedAvatarProvider(studentAvatarUrl!) : null,
                 child: studentAvatarUrl == null
                     ? Text(studentInitials ?? '?',
                         style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: _kPrimary))
@@ -553,7 +554,7 @@ class _ThreadRow extends StatelessWidget {
                         radius: 17.5,
                         backgroundColor: _kAccentLt,
                         backgroundImage: thread.otherParticipant?.avatar != null
-                            ? NetworkImage(thread.otherParticipant!.avatar!)
+                            ? cachedAvatarProvider(thread.otherParticipant!.avatar!)
                             : null,
                         child: thread.otherParticipant?.avatar == null
                             ? Text(_initials(name),

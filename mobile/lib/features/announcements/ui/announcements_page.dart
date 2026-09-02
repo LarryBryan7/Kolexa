@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import '../../../core/utils/cached_avatar.dart';
 import '../bloc/announcements_bloc.dart';
 import '../data/models/announcement_model.dart';
 
@@ -206,7 +207,7 @@ class _AnnouncementTile extends StatelessWidget {
             CircleAvatar(
               radius: 20,
               backgroundImage: announcement.authorAvatar != null
-                  ? NetworkImage(announcement.authorAvatar!)
+                  ? cachedAvatarProvider(announcement.authorAvatar!)
                   : null,
               backgroundColor: Colors.grey.shade200,
               child: announcement.authorAvatar == null
@@ -334,7 +335,7 @@ class _AnnouncementDetailPage extends StatelessWidget {
                 CircleAvatar(
                   radius: 20,
                   backgroundImage: announcement.authorAvatar != null
-                      ? NetworkImage(announcement.authorAvatar!)
+                      ? cachedAvatarProvider(announcement.authorAvatar!)
                       : null,
                   child: announcement.authorAvatar == null
                       ? const Icon(Icons.person)

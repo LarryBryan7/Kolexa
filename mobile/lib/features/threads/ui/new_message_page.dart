@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/api/api_client.dart';
+import '../../../core/utils/cached_avatar.dart';
 import '../data/threads_repository.dart';
 import 'thread_page.dart';
 
@@ -181,7 +182,7 @@ class _NewMessagePageState extends State<NewMessagePage> {
                         contentPadding: EdgeInsets.zero,
                         leading: CircleAvatar(
                           backgroundColor: _kPrimaryLt,
-                          backgroundImage: c.avatar != null ? NetworkImage(c.avatar!) : null,
+                          backgroundImage: c.avatar != null ? cachedAvatarProvider(c.avatar!) : null,
                           child: c.avatar == null
                               ? const Icon(Icons.person, color: _kPrimary, size: 20)
                               : null,
