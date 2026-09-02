@@ -737,7 +737,29 @@ export class ThreadsService {
       where: { threadId_userId: { threadId, userId } },
       data: { lastReadAt: new Date() },
     });
+    // Avisa al OTRO participante (push silencioso, sin banner) para que si
+    // tiene este chat abierto, el segundo check pase de "enviado" a
+    // "leído" solo, sin esperar a que otra cosa dispare un refresh. Fire-
+    // and-forget: quien marca como leído no debe esperar a que esto se
+    // resuelva.
+    this.notifyReadReceipt(threadId, userId).catch(() => {});
     return { ok: true };
+  }
+
+  private async notifyReadReceipt(threadId: bigint, readerId: bigint) {
+    const others = await this.prisma.threadParticipant.findMany({
+      where: { threadId, userId: { not: readerId } },
+      select: { userId: true },
+    });
+    await Promise.all(
+      others.map((p) =>
+        this.notifications.sendSilentRefresh(p.userId, {
+          screen: 'thread',
+          threadId: threadId.toString(),
+          refresh: 'true',
+        }),
+      ),
+    );
   }
 
   async setMuted(threadId: bigint, userId: bigint, muted: boolean) {

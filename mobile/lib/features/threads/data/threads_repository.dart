@@ -163,6 +163,23 @@ class ThreadSummary {
           : null,
     );
   }
+
+  // Para marcar como leído localmente al instante (ver InboxPage._openThread)
+  // sin esperar el round-trip de un refresh completo de la bandeja.
+  ThreadSummary copyWith({bool? unread, int? unreadCount}) => ThreadSummary(
+        id: id,
+        kind: kind,
+        subject: subject,
+        studentId: studentId,
+        studentName: studentName,
+        priority: priority,
+        lastMessageAt: lastMessageAt,
+        unread: unread ?? this.unread,
+        unreadCount: unreadCount ?? this.unreadCount,
+        muted: muted,
+        otherParticipant: otherParticipant,
+        lastMessage: lastMessage,
+      );
 }
 
 class ThreadMessage {
