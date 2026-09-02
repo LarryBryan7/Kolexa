@@ -48,7 +48,10 @@ function makePrisma(overrides: Record<string, any> = {}) {
 
 function makeService(prismaOverrides: Record<string, any> = {}) {
   const prisma = makePrisma(prismaOverrides);
-  const notifications = { sendToUser: jest.fn().mockResolvedValue(undefined) };
+  const notifications = {
+    sendToUser: jest.fn().mockResolvedValue(undefined),
+    sendSilentRefresh: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new ThreadsService(prisma as any, notifications as any);
   return { service, prisma, notifications };
 }
@@ -649,6 +652,50 @@ describe('ThreadsService — acceso a un hilo por participación', () => {
     });
     await service.sendMessage(1n, PARENT.id, 'hola');
     expect(notifications.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it('markRead avisa al OTRO participante con un push silencioso, para el doble check en tiempo real', async () => {
+    const { service, prisma, notifications } = makeService({
+      threadParticipant: {
+        findUnique: jest.fn().mockResolvedValue({ thread: { closedAt: null } }),
+        findMany: jest.fn().mockResolvedValue([{ userId: TEACHER.id }]), // el otro participante
+        createMany: jest.fn(),
+        update: jest.fn(),
+      },
+    });
+
+    await service.markRead(1n, PARENT.id);
+    await new Promise((resolve) => setImmediate(resolve)); // drena el fire-and-forget
+
+    expect(prisma.threadParticipant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { threadId_userId: { threadId: 1n, userId: PARENT.id } },
+        data: { lastReadAt: expect.any(Date) },
+      }),
+    );
+    expect(notifications.sendSilentRefresh).toHaveBeenCalledWith(
+      TEACHER.id,
+      expect.objectContaining({ screen: 'thread', threadId: '1', refresh: 'true' }),
+    );
+    // Nunca se avisa a sí mismo — solo a los demás participantes.
+    expect(notifications.sendSilentRefresh).not.toHaveBeenCalledWith(
+      PARENT.id,
+      expect.anything(),
+    );
+  });
+
+  it('markRead no rompe si el push silencioso falla (fire-and-forget)', async () => {
+    const { service, notifications } = makeService({
+      threadParticipant: {
+        findUnique: jest.fn().mockResolvedValue({ thread: { closedAt: null } }),
+        findMany: jest.fn().mockResolvedValue([{ userId: TEACHER.id }]),
+        createMany: jest.fn(),
+        update: jest.fn(),
+      },
+    });
+    notifications.sendSilentRefresh.mockRejectedValue(new Error('FCM caído'));
+
+    await expect(service.markRead(1n, PARENT.id)).resolves.toEqual({ ok: true });
   });
 });
 

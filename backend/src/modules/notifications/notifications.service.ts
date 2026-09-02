@@ -63,6 +63,24 @@ export class NotificationsService implements OnModuleInit {
     await this._sendBatch(tokens.map((t) => t.token), title, body, data);
   }
 
+  // ── sendSilentRefresh ────────────────────────────────────────
+  // Push de datos puro, sin banner ni sonido — solo para que una pantalla
+  // ya abierta se refresque sola (ej. el doble check de "leído" en el
+  // chat de quien envió, cuando el otro participante lo marca como
+  // leído). No es información que el usuario deba "ver", por eso no pasa
+  // por sendToUser.
+  async sendSilentRefresh(userId: bigint, data: Record<string, string>) {
+    if (!this.enabled) return;
+
+    const tokens = await this.prisma.pushToken.findMany({
+      where: { userId },
+      select: { token: true },
+    });
+
+    if (tokens.length === 0) return;
+    await this._sendBatch(tokens.map((t) => t.token), undefined, undefined, data);
+  }
+
   // ── sendAttendanceToParent ─────────────────────────────────
   // Notificación personalizada por alumno: "Miguel está presente ✅"
   // Usa el vínculo GcCourseStudent.studentId → UserStudent → parent push tokens.
@@ -187,8 +205,12 @@ export class NotificationsService implements OnModuleInit {
   // Reintenta envíos fallidos con backoff exponencial (nivel WhatsApp).
   private async _sendBatch(
     tokens: string[],
-    title: string,
-    body: string,
+    // undefined en ambos = push silencioso: sin banner visible, solo
+    // `data` para que la pantalla ya abierta se refresque sola (ver
+    // NotificationsService.sendSilentRefresh). Firebase exige omitir el
+    // bloque `notification` por completo para no mostrar nada.
+    title: string | undefined,
+    body: string | undefined,
     data?: Record<string, string>,
     options?: { collapseKey?: string; ttlSeconds?: number },
   ) {
@@ -197,6 +219,7 @@ export class NotificationsService implements OnModuleInit {
     const ttlMs = (options?.ttlSeconds ?? 14400) * 1000; // 4h default
     const expiresAt = Math.floor(Date.now() / 1000) + (options?.ttlSeconds ?? 14400);
     const invalidTokens: string[] = [];
+    const silent = title === undefined && body === undefined;
 
     for (let i = 0; i < tokens.length; i += CHUNK) {
       const chunk = tokens.slice(i, i + CHUNK);
@@ -208,34 +231,40 @@ export class NotificationsService implements OnModuleInit {
         try {
           response = await admin.messaging().sendEachForMulticast({
             tokens: chunk,
-            notification: { title, body },
+            ...(silent ? {} : { notification: { title: title!, body: body! } }),
             data: data ?? {},
             android: {
               priority: 'high',
               ttl: ttlMs,
               collapseKey: options?.collapseKey,
-              notification: {
-                channelId: 'kolexa_default',
-                priority: 'high',
-                sound: 'default',
-                defaultVibrateTimings: true,
-                defaultLightSettings: true,
-                notificationCount: 1,
-              },
+              ...(silent
+                ? {}
+                : {
+                    notification: {
+                      channelId: 'kolexa_default',
+                      priority: 'high',
+                      sound: 'default',
+                      defaultVibrateTimings: true,
+                      defaultLightSettings: true,
+                      notificationCount: 1,
+                    },
+                  }),
             },
             apns: {
               headers: {
-                'apns-priority': '10',
-                'apns-push-type': 'alert',
+                'apns-priority': silent ? '5' : '10',
+                'apns-push-type': silent ? 'background' : 'alert',
                 ...(options?.collapseKey ? { 'apns-collapse-id': options.collapseKey } : {}),
                 'apns-expiration': String(expiresAt),
               },
               payload: {
-                aps: {
-                  sound: 'default',
-                  badge: 1,
-                  'interruption-level': 'time-sensitive', // atraviesa el Focus Mode de iOS 15+
-                },
+                aps: silent
+                  ? { 'content-available': 1 }
+                  : {
+                      sound: 'default',
+                      badge: 1,
+                      'interruption-level': 'time-sensitive', // atraviesa el Focus Mode de iOS 15+
+                    },
               },
             },
           });

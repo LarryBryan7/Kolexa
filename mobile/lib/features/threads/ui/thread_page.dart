@@ -203,6 +203,30 @@ class ThreadPage extends StatefulWidget {
 
   @override
   State<ThreadPage> createState() => _ThreadPageState();
+
+  // Le permite a InboxPage "adelantar" el último mensaje conocido al cache
+  // de este chat ANTES de navegar — si un mensaje llegó mientras el chat
+  // estaba cerrado, solo se actualizaba el cache de la bandeja, y este
+  // chat mostraba la versión vieja un instante hasta que su propio fetch
+  // resolvía (ver InboxPage._openThread). Se ignora si ya está reflejado
+  // o si es más vieja que lo que el cache ya tiene.
+  static void seedLastMessage(String threadId, ThreadPreview preview) {
+    final existing = _ThreadPageState._cache[threadId];
+    final lastCached = existing?.messages.isNotEmpty == true ? existing!.messages.last : null;
+    if (lastCached != null && !preview.sentAt.isAfter(lastCached.sentAt)) return;
+    final synthetic = ThreadMessage(
+      id: 'preview-${preview.sentAt.microsecondsSinceEpoch}',
+      senderId: preview.senderId,
+      senderName: '',
+      body: preview.body,
+      sentAt: preview.sentAt,
+    );
+    _ThreadPageState._cache[threadId] = ThreadMessagesPage(
+      messages: [...(existing?.messages ?? []), synthetic],
+      otherLastReadAt: existing?.otherLastReadAt,
+      otherLastActiveAt: existing?.otherLastActiveAt,
+    );
+  }
 }
 
 class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
