@@ -96,7 +96,7 @@ class InboxPage extends StatefulWidget {
 // existen visualmente pero no ocultan/muestran nada real.
 enum _InboxFilter { mensajes, comunicados, reuniones }
 
-class _InboxPageState extends State<InboxPage> {
+class _InboxPageState extends State<InboxPage> with WidgetsBindingObserver {
   // Cache en memoria a nivel de clase: sobrevive a que esta pantalla se
   // destruya y se vuelva a crear (ej. al cambiar de pestaña y volver), así
   // que reabrir Chats muestra la última lista conocida al instante, sin
@@ -116,13 +116,25 @@ class _InboxPageState extends State<InboxPage> {
     _threads = _cachedThreads;
     _refresh(showErrorIfEmpty: true);
     PushNotificationsService.instance.addDataRefreshListener(_handleDataRefresh);
+    WidgetsBinding.instance.addObserver(this);
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
     });
   }
 
+  // Red de seguridad si el push no llegó mientras la app estaba en
+  // background (conocido en gama baja/media, mismo patrón que
+  // ThreadPage): al volver a primer plano, se refresca igual. De paso
+  // "precalienta" la conexión (TCP/TLS) antes de que el usuario llegue a
+  // mirar la bandeja, en vez de pagar ese costo recién cuando la abre.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refresh();
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     PushNotificationsService.instance.removeDataRefreshListener(_handleDataRefresh);
     _searchController.dispose();
     super.dispose();
