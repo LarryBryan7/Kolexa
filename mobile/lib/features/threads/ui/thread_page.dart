@@ -273,9 +273,23 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
     _load();
     // Se marca leído al entrar: si el otro responde mientras se lee, el
     // siguiente refresh de la bandeja ya no lo mostrará como pendiente.
-    _repo.markRead(widget.threadId).catchError((_) {});
+    _markRead();
     WidgetsBinding.instance.addObserver(this);
     PushNotificationsService.instance.addDataRefreshListener(_handleDataRefresh);
+  }
+
+  // markRead solo se llamaba en initState (al ENTRAR al chat) — un mensaje
+  // que llega mientras el chat ya está abierto (por push, sin salir/volver
+  // a entrar) nunca se marcaba como leído, aunque el usuario lo esté
+  // viendo en pantalla. Eso rompía dos cosas: la bandeja lo mostraba como
+  // no leído al volver, y el que lo mandó nunca recibía el push silencioso
+  // de "te leyeron" (ver markRead en el backend), así que su doble check
+  // no se actualizaba. Se centraliza acá para llamarlo en los 3 momentos
+  // en que un mensaje puede "aparecer visto": al entrar, al llegar uno
+  // nuevo con el chat ya abierto, y al volver de background con el chat
+  // todavía en pantalla.
+  void _markRead() {
+    _repo.markRead(widget.threadId).catchError((_) {});
   }
 
   // Push de un mensaje nuevo en ESTA conversación → se refresca sola. Se
@@ -285,6 +299,7 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
     if (!mounted) return;
     if (data['screen'] == 'thread' && data['threadId'] == widget.threadId) {
       _load();
+      _markRead();
     }
   }
 
@@ -292,7 +307,10 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
   // al volver del background, se refresca igual.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _load();
+    if (state == AppLifecycleState.resumed) {
+      _load();
+      _markRead();
+    }
   }
 
   // Refresco que nunca borra `_messages` antes de tener el resultado
