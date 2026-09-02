@@ -282,25 +282,15 @@ export class AttendanceService {
     limit = 30,
     offset = 0,
   ) {
-    const student = await this.prisma.student.findUnique({
-      where: { id: studentId },
-      select: { schoolId: true },
-    });
-    if (!student) throw new NotFoundException('Alumno no encontrado');
-
-    if (!isSchoolAdminOf(user, student.schoolId)) {
-      // Verificar que el usuario es padre/tutor de este alumno
-      const relationship = await this.prisma.userStudent.findFirst({
-        where: { userId: user.sub, studentId },
-      });
-      if (!relationship) {
-        throw new ForbiddenException('No tienes acceso al historial de este alumno');
-      }
-    }
-
-    // Las tres consultas usan el mismo `studentId` fijo y ninguna depende
-    // del resultado de otra — corren en paralelo.
-    const [records, total, stats] = await Promise.all([
+    // Las 5 consultas son independientes entre sí (todas solo necesitan
+    // studentId/user.sub, que ya vienen del request) — antes las 2 de
+    // chequeo se esperaban en etapas secuenciales ANTES de este mismo
+    // Promise.all. El chequeo de acceso se aplica sobre los resultados ya
+    // resueltos, descartando los datos sin devolverlos si no está
+    // autorizado.
+    const [student, relationship, records, total, stats] = await Promise.all([
+      this.prisma.student.findUnique({ where: { id: studentId }, select: { schoolId: true } }),
+      this.prisma.userStudent.findFirst({ where: { userId: user.sub, studentId } }),
       // Obtener el historial ordenado por fecha descendente (más reciente primero)
       this.prisma.attendanceRecord.findMany({
         where: { studentId },
@@ -331,6 +321,11 @@ export class AttendanceService {
         _count: { status: true },
       }),
     ]);
+
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+    if (!isSchoolAdminOf(user, student.schoolId) && !relationship) {
+      throw new ForbiddenException('No tienes acceso al historial de este alumno');
+    }
 
     return { records, total, stats };
   }
