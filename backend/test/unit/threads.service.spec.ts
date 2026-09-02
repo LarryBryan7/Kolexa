@@ -497,6 +497,64 @@ describe('ThreadsService — bandeja y no-leído', () => {
     expect(inbox.find((t) => t.id === '2')?.otherParticipant?.online).toBe(false);
     expect(inbox.find((t) => t.id === '3')?.otherParticipant?.online).toBe(false);
   });
+
+  it('lastMessage.delivered: true si el otro leyó el hilo O estuvo activo después del envío, false si ninguna', async () => {
+    const sentAt = new Date('2026-08-30T10:00:00Z');
+    const before = new Date('2026-08-30T09:00:00Z');
+    const after = new Date('2026-08-30T10:30:00Z');
+    const { service } = makeService({
+      threadParticipant: {
+        findMany: jest.fn().mockResolvedValue([
+          // Hilo 1: la otra persona leyó el hilo después del envío -> delivered.
+          {
+            lastReadAt: null,
+            mutedAt: null,
+            thread: {
+              id: 1n, kind: 'direct', subject: null, studentId: null, priority: 'normal',
+              lastMessageAt: sentAt, student: null,
+              participants: [{ lastReadAt: after, user: { id: TEACHER.id, firstName: 'Ana', lastName: null, avatar: null, lastActiveAt: null } }],
+            },
+          },
+          // Hilo 2: no leyó, pero estuvo activa/online después del envío -> delivered.
+          {
+            lastReadAt: null,
+            mutedAt: null,
+            thread: {
+              id: 2n, kind: 'direct', subject: null, studentId: null, priority: 'normal',
+              lastMessageAt: sentAt, student: null,
+              participants: [{ lastReadAt: null, user: { id: OTHER_TEACHER.id, firstName: 'Luis', lastName: null, avatar: null, lastActiveAt: after } }],
+            },
+          },
+          // Hilo 3: ni leyó ni estuvo activa después del envío -> NO delivered.
+          {
+            lastReadAt: null,
+            mutedAt: null,
+            thread: {
+              id: 3n, kind: 'direct', subject: null, studentId: null, priority: 'normal',
+              lastMessageAt: sentAt, student: null,
+              participants: [{ lastReadAt: before, user: { id: ADMIN.id, firstName: 'Director', lastName: null, avatar: null, lastActiveAt: before } }],
+            },
+          },
+        ]),
+        createMany: jest.fn(),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
+      threadMessage: {
+        findMany: jest.fn().mockResolvedValue([
+          { threadId: 1n, body: 'hola', senderId: PARENT.id, sentAt },
+          { threadId: 2n, body: 'hola', senderId: PARENT.id, sentAt },
+          { threadId: 3n, body: 'hola', senderId: PARENT.id, sentAt },
+        ]),
+        create: jest.fn(),
+      },
+    });
+
+    const inbox = await service.getInbox(PARENT.id, SCHOOL_A);
+    expect(inbox.find((t) => t.id === '1')?.lastMessage?.delivered).toBe(true);
+    expect(inbox.find((t) => t.id === '2')?.lastMessage?.delivered).toBe(true);
+    expect(inbox.find((t) => t.id === '3')?.lastMessage?.delivered).toBe(false);
+  });
 });
 
 describe('ThreadsService — acceso a un hilo por participación', () => {
@@ -608,7 +666,7 @@ describe('ThreadsService.getMessages — paginación', () => {
       threadParticipant: {
         findUnique: jest.fn().mockResolvedValue({ thread: { closedAt: null } }),
         findMany: jest.fn(),
-        findFirst: jest.fn().mockResolvedValue({ lastReadAt: readAt }),
+        findFirst: jest.fn().mockResolvedValue({ lastReadAt: readAt, user: { lastActiveAt: null } }),
         createMany: jest.fn(),
         update: jest.fn(),
       },
@@ -627,7 +685,7 @@ describe('ThreadsService.getMessages — paginación', () => {
       threadParticipant: {
         findUnique: jest.fn().mockResolvedValue({ thread: { closedAt: null } }),
         findMany: jest.fn(),
-        findFirst: jest.fn().mockResolvedValue({ lastReadAt: null }),
+        findFirst: jest.fn().mockResolvedValue({ lastReadAt: null, user: { lastActiveAt: null } }),
         createMany: jest.fn(),
         update: jest.fn(),
       },
@@ -636,6 +694,24 @@ describe('ThreadsService.getMessages — paginación', () => {
 
     const result = await service.getMessages(1n, PARENT.id);
     expect(result.otherLastReadAt).toBeNull();
+  });
+
+  it('incluye el lastActiveAt del otro participante, para el doble check por "le llegó" sin haber leído el hilo', async () => {
+    const activeAt = new Date('2026-08-31T10:05:00.000Z');
+    const { service } = makeService({
+      threadParticipant: {
+        findUnique: jest.fn().mockResolvedValue({ thread: { closedAt: null } }),
+        findMany: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue({ lastReadAt: null, user: { lastActiveAt: activeAt } }),
+        createMany: jest.fn(),
+        update: jest.fn(),
+      },
+      threadMessage: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
+    });
+
+    const result = await service.getMessages(1n, PARENT.id);
+    expect(result.otherLastReadAt).toBeNull();
+    expect(result.otherLastActiveAt).toEqual(activeAt);
   });
 });
 
