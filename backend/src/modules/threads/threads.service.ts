@@ -10,8 +10,12 @@
 // usuario — por eso `studentId` es obligatorio salvo que uno de los dos
 // lados sea director/admin del colegio.
 //
-// El no-leído nunca se cuenta: se compara `thread.lastMessageAt` contra
-// `participant.lastReadAt`. Una fila por participante, no una por mensaje.
+// El no-leído en sí (mostrar el punto) sigue siendo una comparación de
+// fechas: `thread.lastMessageAt` contra `participant.lastReadAt`, una fila
+// por participante, no una por mensaje. El CONTADOR (cuántos, para el
+// badge "1"/"2"/"9+") sí cuenta mensajes de verdad — ver getInbox — pero
+// solo at-vuelo sobre `sentAt`, sin ninguna tabla nueva de "leído por
+// mensaje".
 // ============================================================
 
 import {
@@ -32,6 +36,7 @@ export interface ThreadSummary {
   priority: string;
   lastMessageAt: Date;
   unread: boolean;
+  unreadCount: number;
   muted: boolean;
   otherParticipant: { id: string; name: string; avatar: string | null } | null;
   lastMessage: { body: string; senderId: string; sentAt: Date } | null;
@@ -113,6 +118,22 @@ export class ThreadsService {
       if (!lastByThread.has(key)) lastByThread.set(key, m);
     }
 
+    // Para el badge numérico: mensajes de LA OTRA persona (nunca los
+    // propios) por hilo, livianos (solo threadId+sentAt) — se comparan en
+    // memoria contra el `lastReadAt` de ESE hilo, que ya varía por hilo y
+    // no se puede expresar en un solo WHERE de groupBy.
+    const otherMessages = await this.prisma.threadMessage.findMany({
+      where: { threadId: { in: threadIds }, deletedAt: null, senderId: { not: userId } },
+      select: { threadId: true, sentAt: true },
+    });
+    const sentAtsByThread = new Map<string, Date[]>();
+    for (const m of otherMessages) {
+      const key = m.threadId.toString();
+      const arr = sentAtsByThread.get(key);
+      if (arr) arr.push(m.sentAt);
+      else sentAtsByThread.set(key, [m.sentAt]);
+    }
+
     return parts
       .map((p) => {
         const t = p.thread;
@@ -129,6 +150,9 @@ export class ThreadsService {
           priority: t.priority,
           lastMessageAt: t.lastMessageAt,
           unread: !p.lastReadAt || p.lastReadAt < t.lastMessageAt,
+          unreadCount: (sentAtsByThread.get(t.id.toString()) ?? []).filter(
+            (sentAt) => !p.lastReadAt || sentAt > p.lastReadAt,
+          ).length,
           muted: !!p.mutedAt,
           otherParticipant: other
             ? {
