@@ -19,6 +19,7 @@ import '../../../core/services/push_notifications_service.dart';
 import '../../../core/utils/cached_avatar.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
+import '../data/threads_local_store.dart';
 import '../data/threads_repository.dart';
 import 'new_message_page.dart';
 import 'thread_page.dart';
@@ -115,6 +116,10 @@ class _InboxPageState extends State<InboxPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _threads = _cachedThreads;
+    // Si es un proceso nuevo (el cache en memoria todavía no tiene nada),
+    // se lee la última bandeja conocida de disco — instantáneo, sobrevive
+    // a reinicios de la app, a diferencia del cache en memoria de arriba.
+    if (_threads == null) _loadFromDisk();
     _refresh(showErrorIfEmpty: true);
     PushNotificationsService.instance.addDataRefreshListener(_handleDataRefresh);
     WidgetsBinding.instance.addObserver(this);
@@ -155,12 +160,28 @@ class _InboxPageState extends State<InboxPage> with WidgetsBindingObserver {
   // vuelve a mostrar el loader cada vez que se reemplaza el Future). El
   // spinner de pantalla completa solo aparece si de verdad no hay nada
   // que mostrar todavía.
+  // Lectura de disco: se ejecuta en paralelo al primer `_refresh()` de red
+  // (que igual sigue corriendo) — si el disco responde primero (siempre lo
+  // hace: es local), reemplaza el spinner por la última bandeja conocida
+  // sin esperar el round-trip a São Paulo. Si la red ya resolvió antes
+  // (poco probable, pero posible), no pisa ese resultado más fresco.
+  Future<void> _loadFromDisk() async {
+    final local = await ThreadsLocalStore.loadInbox();
+    if (!mounted || local.isEmpty || _threads != null) return;
+    _cachedThreads = local;
+    setState(() {
+      _threads = local;
+      _loadingFirstTime = false;
+    });
+  }
+
   Future<void> _refresh({bool showErrorIfEmpty = false}) async {
     if (_threads == null) setState(() => _loadingFirstTime = true);
     try {
       final repo = ThreadsRepository(context.read<ApiClient>());
       final threads = await repo.getInbox();
       _cachedThreads = threads;
+      ThreadsLocalStore.saveInbox(threads);
       if (!mounted) return;
       setState(() {
         _threads = threads;
@@ -214,6 +235,7 @@ class _InboxPageState extends State<InboxPage> with WidgetsBindingObserver {
           .map((s) => s.id == t.id ? s.copyWith(unread: false, unreadCount: 0) : s)
           .toList();
       _cachedThreads = updated;
+      ThreadsLocalStore.saveInbox(updated);
       setState(() => _threads = updated);
     }
     await _onRefresh();
