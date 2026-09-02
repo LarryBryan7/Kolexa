@@ -252,59 +252,58 @@ export class ThreadsService {
     }
 
     if (user.roles.includes('parent')) {
-      const [admins, myStudents] = await Promise.all([
+      // Antes: 2 round trips secuenciales encadenados (mis hijos → aulas
+      // de esos hijos con docente) — medido en producción junto con la
+      // rama docente de abajo: 0.88-2s. Se fusiona en una sola consulta
+      // con JOINs; corre en paralelo con `adminsPromise`.
+      const [admins, rows] = await Promise.all([
         adminsPromise,
-        this.prisma.userStudent.findMany({
-          where: { userId: user.id },
-          select: { studentId: true, student: { select: { firstName: true, lastName: true } } },
-        }),
+        this.prisma.$queryRaw<
+          {
+            teacher_id: bigint;
+            teacher_first_name: string;
+            teacher_last_name: string | null;
+            teacher_avatar: string | null;
+            student_id: bigint;
+            student_first_name: string;
+            student_last_name: string | null;
+          }[]
+        >`
+          SELECT DISTINCT
+            cc.teacher_id AS teacher_id,
+            tu.first_name AS teacher_first_name,
+            tu.last_name AS teacher_last_name,
+            tu.avatar_url AS teacher_avatar,
+            s.id AS student_id,
+            s.first_name AS student_first_name,
+            s.last_name AS student_last_name
+          FROM user_students us
+          JOIN students s ON s.id = us.student_id
+          JOIN student_enrollments se ON se.student_id = us.student_id AND se.is_active = true
+          JOIN classroom_courses cc ON cc.classroom_id = se.classroom_id AND cc.teacher_id IS NOT NULL
+          JOIN users tu ON tu.id = cc.teacher_id
+          WHERE us.user_id = ${user.id}
+        `,
       ]);
       const adminContacts = toAdminContacts(admins);
-      if (myStudents.length === 0) return adminContacts;
-      const studentIds = myStudents.map((s) => s.studentId);
-      const studentName = new Map(
-        myStudents.map((s) => [
-          s.studentId.toString(),
-          `${s.student.firstName} ${s.student.lastName ?? ''}`.trim(),
-        ]),
-      );
-
-      const links = await this.prisma.classroomCourse.findMany({
-        where: {
-          teacherId: { not: null },
-          classroom: { enrollments: { some: { studentId: { in: studentIds }, isActive: true } } },
-        },
-        select: {
-          teacherId: true,
-          teacher: { select: { firstName: true, lastName: true, avatar: true } },
-          classroom: {
-            select: {
-              enrollments: {
-                where: { studentId: { in: studentIds }, isActive: true },
-                select: { studentId: true },
-              },
-            },
-          },
-        },
-      });
 
       const byTeacher = new Map<
         string,
-        { name: string; avatar: string | null; studentIds: Set<string> }
+        { name: string; avatar: string | null; students: Map<string, string> }
       >();
-      for (const link of links) {
-        if (!link.teacherId || !link.teacher) continue;
-        const key = link.teacherId.toString();
+      for (const row of rows) {
+        const key = row.teacher_id.toString();
         if (!byTeacher.has(key)) {
           byTeacher.set(key, {
-            name: `${link.teacher.firstName} ${link.teacher.lastName ?? ''}`.trim(),
-            avatar: link.teacher.avatar,
-            studentIds: new Set(),
+            name: `${row.teacher_first_name} ${row.teacher_last_name ?? ''}`.trim(),
+            avatar: row.teacher_avatar,
+            students: new Map(),
           });
         }
-        for (const e of link.classroom.enrollments) {
-          byTeacher.get(key)!.studentIds.add(e.studentId.toString());
-        }
+        byTeacher.get(key)!.students.set(
+          row.student_id.toString(),
+          `${row.student_first_name} ${row.student_last_name ?? ''}`.trim(),
+        );
       }
 
       const teacherContacts: Contact[] = [...byTeacher.entries()].map(([id, v]) => ({
@@ -312,60 +311,63 @@ export class ThreadsService {
         name: v.name,
         avatar: v.avatar,
         role: 'teacher',
-        students: [...v.studentIds].map((sid) => ({ id: sid, name: studentName.get(sid) ?? '' })),
+        students: [...v.students.entries()].map(([sid, name]) => ({ id: sid, name })),
       }));
       return [...teacherContacts, ...adminContacts];
     }
 
     if (user.roles.includes('teacher')) {
-      const [admins, myClassrooms] = await Promise.all([
+      // Mismo fix que la rama de arriba: 3 round trips secuenciales (mis
+      // aulas → alumnos matriculados → padres de esos alumnos) fusionados
+      // en 1 sola consulta con JOINs.
+      const [admins, rows] = await Promise.all([
         adminsPromise,
-        this.prisma.classroomCourse.findMany({
-          where: { teacherId: user.id },
-          select: { classroomId: true },
-          distinct: ['classroomId'],
-        }),
+        this.prisma.$queryRaw<
+          {
+            parent_id: bigint;
+            parent_first_name: string;
+            parent_last_name: string | null;
+            parent_avatar: string | null;
+            student_id: bigint;
+            student_first_name: string;
+            student_last_name: string | null;
+          }[]
+        >`
+          SELECT DISTINCT
+            us.user_id AS parent_id,
+            u.first_name AS parent_first_name,
+            u.last_name AS parent_last_name,
+            u.avatar_url AS parent_avatar,
+            s.id AS student_id,
+            s.first_name AS student_first_name,
+            s.last_name AS student_last_name
+          FROM classroom_courses cc
+          JOIN student_enrollments se ON se.classroom_id = cc.classroom_id AND se.is_active = true
+          JOIN students s ON s.id = se.student_id
+          JOIN user_students us ON us.student_id = se.student_id
+          JOIN users u ON u.id = us.user_id
+          WHERE cc.teacher_id = ${user.id}
+        `,
       ]);
       const adminContacts = toAdminContacts(admins);
-      if (myClassrooms.length === 0) return adminContacts;
-      const classroomIds = myClassrooms.map((c) => c.classroomId);
-
-      const enrollments = await this.prisma.studentEnrollment.findMany({
-        where: { classroomId: { in: classroomIds }, isActive: true },
-        select: { studentId: true, student: { select: { firstName: true, lastName: true } } },
-      });
-      const studentName = new Map(
-        enrollments.map((e) => [
-          e.studentId.toString(),
-          `${e.student.firstName} ${e.student.lastName ?? ''}`.trim(),
-        ]),
-      );
-      const studentIds = enrollments.map((e) => e.studentId);
-      if (studentIds.length === 0) return adminContacts;
-
-      const parentLinks = await this.prisma.userStudent.findMany({
-        where: { studentId: { in: studentIds } },
-        select: {
-          userId: true,
-          studentId: true,
-          user: { select: { firstName: true, lastName: true, avatar: true } },
-        },
-      });
 
       const byParent = new Map<
         string,
-        { name: string; avatar: string | null; studentIds: Set<string> }
+        { name: string; avatar: string | null; students: Map<string, string> }
       >();
-      for (const link of parentLinks) {
-        const key = link.userId.toString();
+      for (const row of rows) {
+        const key = row.parent_id.toString();
         if (!byParent.has(key)) {
           byParent.set(key, {
-            name: `${link.user.firstName} ${link.user.lastName ?? ''}`.trim(),
-            avatar: link.user.avatar,
-            studentIds: new Set(),
+            name: `${row.parent_first_name} ${row.parent_last_name ?? ''}`.trim(),
+            avatar: row.parent_avatar,
+            students: new Map(),
           });
         }
-        byParent.get(key)!.studentIds.add(link.studentId.toString());
+        byParent.get(key)!.students.set(
+          row.student_id.toString(),
+          `${row.student_first_name} ${row.student_last_name ?? ''}`.trim(),
+        );
       }
 
       const parentContacts: Contact[] = [...byParent.entries()].map(([id, v]) => ({
@@ -373,7 +375,7 @@ export class ThreadsService {
         name: v.name,
         avatar: v.avatar,
         role: 'parent',
-        students: [...v.studentIds].map((sid) => ({ id: sid, name: studentName.get(sid) ?? '' })),
+        students: [...v.students.entries()].map(([sid, name]) => ({ id: sid, name })),
       }));
       return [...parentContacts, ...adminContacts];
     }
