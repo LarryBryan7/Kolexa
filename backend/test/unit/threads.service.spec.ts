@@ -793,28 +793,25 @@ describe('ThreadsService.getMessages — paginación', () => {
 
 describe('ThreadsService.getContacts — a quién se le puede escribir', () => {
   it('un padre ve a los docentes de sus hijos (con los alumnos en común) y al director', async () => {
-    const { service, prisma } = makeService({
+    const { service } = makeService({
       user: {
         findMany: jest.fn().mockResolvedValue([
           { id: ADMIN.id, firstName: 'Directora', lastName: null, avatar: null },
         ]),
       },
-      userStudent: {
-        findFirst: jest.fn(),
-        findMany: jest.fn().mockResolvedValue([
-          { studentId: STUDENT, student: { firstName: 'Juan', lastName: 'Quispe' } },
-        ]),
-      },
-      classroomCourse: {
-        findFirst: jest.fn(),
-        findMany: jest.fn().mockResolvedValue([
-          {
-            teacherId: TEACHER.id,
-            teacher: { firstName: 'Ana', lastName: 'Pérez', avatar: null },
-            classroom: { enrollments: [{ studentId: STUDENT }] },
-          },
-        ]),
-      },
+      // Rama padre: una sola consulta con JOINs (ver comentario en
+      // threads.service.ts) en vez de 2 llamadas ORM encadenadas.
+      $queryRaw: jest.fn().mockResolvedValue([
+        {
+          teacher_id: TEACHER.id,
+          teacher_first_name: 'Ana',
+          teacher_last_name: 'Pérez',
+          teacher_avatar: null,
+          student_id: STUDENT,
+          student_first_name: 'Juan',
+          student_last_name: 'Quispe',
+        },
+      ]),
     });
 
     const contacts = await service.getContacts(SCHOOL_A, PARENT);
@@ -832,7 +829,7 @@ describe('ThreadsService.getContacts — a quién se le puede escribir', () => {
           .fn()
           .mockResolvedValue([{ id: ADMIN.id, firstName: 'Directora', lastName: null, avatar: null }]),
       },
-      userStudent: { findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+      $queryRaw: jest.fn().mockResolvedValue([]), // sin hijos -> el JOIN no devuelve filas
     });
     const contacts = await service.getContacts(SCHOOL_A, PARENT);
     expect(contacts).toEqual([
@@ -845,27 +842,29 @@ describe('ThreadsService.getContacts — a quién se le puede escribir', () => {
       user: {
         findMany: jest.fn().mockResolvedValue([]), // sin director configurado en este colegio de prueba
       },
-      classroomCourse: {
-        findFirst: jest.fn(),
-        findMany: jest.fn().mockResolvedValue([{ classroomId: 900n }]),
-      },
-      studentEnrollment: {
-        findMany: jest.fn().mockResolvedValue([
-          { studentId: STUDENT, student: { firstName: 'Juan', lastName: 'Quispe' } },
-          { studentId: OTHER_STUDENT, student: { firstName: 'Ana', lastName: 'García' } },
-        ]),
-      },
-      userStudent: {
-        findFirst: jest.fn(),
-        findMany: jest.fn().mockResolvedValue([
-          { userId: PARENT.id, studentId: STUDENT, user: { firstName: 'Rosa', lastName: 'Quispe', avatar: null } },
-          {
-            userId: PARENT.id,
-            studentId: OTHER_STUDENT,
-            user: { firstName: 'Rosa', lastName: 'Quispe', avatar: null },
-          },
-        ]),
-      },
+      // Rama docente: una sola consulta con JOINs — un mismo padre con dos
+      // hijos en el aula del docente llega como 2 filas (una por alumno),
+      // que se agrupan en el service.
+      $queryRaw: jest.fn().mockResolvedValue([
+        {
+          parent_id: PARENT.id,
+          parent_first_name: 'Rosa',
+          parent_last_name: 'Quispe',
+          parent_avatar: null,
+          student_id: STUDENT,
+          student_first_name: 'Juan',
+          student_last_name: 'Quispe',
+        },
+        {
+          parent_id: PARENT.id,
+          parent_first_name: 'Rosa',
+          parent_last_name: 'Quispe',
+          parent_avatar: null,
+          student_id: OTHER_STUDENT,
+          student_first_name: 'Ana',
+          student_last_name: 'García',
+        },
+      ]),
     });
 
     const contacts = await service.getContacts(SCHOOL_A, TEACHER);
