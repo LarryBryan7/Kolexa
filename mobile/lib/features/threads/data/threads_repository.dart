@@ -88,12 +88,19 @@ class ThreadOtherParticipant {
   final String id;
   final String name;
   final String? avatar;
-  const ThreadOtherParticipant({required this.id, required this.name, this.avatar});
+  final bool online;
+  const ThreadOtherParticipant({
+    required this.id,
+    required this.name,
+    this.avatar,
+    this.online = false,
+  });
 
   factory ThreadOtherParticipant.fromJson(Map<String, dynamic> json) => ThreadOtherParticipant(
         id: json['id'] as String,
         name: json['name'] as String,
         avatar: json['avatar'] as String?,
+        online: json['online'] as bool? ?? false,
       );
 }
 

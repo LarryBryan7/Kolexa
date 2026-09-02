@@ -38,7 +38,7 @@ export interface ThreadSummary {
   unread: boolean;
   unreadCount: number;
   muted: boolean;
-  otherParticipant: { id: string; name: string; avatar: string | null } | null;
+  otherParticipant: { id: string; name: string; avatar: string | null; online: boolean } | null;
   lastMessage: { body: string; senderId: string; sentAt: Date } | null;
 }
 
@@ -63,6 +63,15 @@ export interface Contact {
 
 const ADMIN_ROLES = ['school_admin', 'director'];
 const isAdmin = (roles: string[]) => roles.some((r) => ADMIN_ROLES.includes(r));
+
+// Punto verde/gris de "en línea": sin WebSocket ni tabla de sesiones, se
+// aproxima con `User.lastActiveAt` (actualizado con throttle en cada
+// request autenticado, ver JwtStrategy). 3 minutos es margen suficiente
+// para que no parpadee entre requests normales, sin quedar "en línea"
+// mucho después de cerrar la app.
+const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
+const isOnline = (lastActiveAt: Date | null) =>
+  !!lastActiveAt && Date.now() - lastActiveAt.getTime() < ONLINE_THRESHOLD_MS;
 
 @Injectable()
 export class ThreadsService {
@@ -91,7 +100,7 @@ export class ThreadsService {
               where: { userId: { not: userId } },
               select: {
                 user: {
-                  select: { id: true, firstName: true, lastName: true, avatar: true },
+                  select: { id: true, firstName: true, lastName: true, avatar: true, lastActiveAt: true },
                 },
               },
             },
@@ -159,6 +168,7 @@ export class ThreadsService {
                 id: other.id.toString(),
                 name: `${other.firstName} ${other.lastName ?? ''}`.trim(),
                 avatar: other.avatar,
+                online: isOnline(other.lastActiveAt),
               }
             : null,
           lastMessage: last

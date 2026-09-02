@@ -50,6 +50,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   private static readonly ACTIVE_CACHE_TTL_MS = 30_000;
   private readonly activeUserCache = new Map<string, { email: string; expiresAt: number }>();
 
+  // Punto verde/gris de "en línea" en chats (ver ThreadsService.isOnline):
+  // se actualiza `User.lastActiveAt` en cada request autenticado, pero con
+  // throttle — sin esto sería un UPDATE por request, en TODA la app. Con
+  // este intervalo el dato queda "fresco" de sobra frente al umbral de 3
+  // minutos que usa ThreadsService para decidir si alguien sigue en línea.
+  private static readonly ACTIVE_WRITE_THROTTLE_MS = 60_000;
+  private readonly lastActiveWriteCache = new Map<string, number>();
+
   // validate() se llama con el PAYLOAD del JWT (datos que pusimos al crear el token).
   // Lo que devuelve este método queda disponible como request.user
   // y puede accederse con el decorador @CurrentUser().
@@ -89,6 +97,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         email,
         expiresAt: now + JwtStrategy.ACTIVE_CACHE_TTL_MS,
       });
+    }
+
+    // Fire-and-forget, nunca bloquea el request: si esta escritura falla o
+    // tarda, no debe afectar la respuesta real que pidió el usuario.
+    const lastWrite = this.lastActiveWriteCache.get(cacheKey) ?? 0;
+    if (now - lastWrite > JwtStrategy.ACTIVE_WRITE_THROTTLE_MS) {
+      this.lastActiveWriteCache.set(cacheKey, now);
+      this.prisma.user
+        .update({ where: { id: userId }, data: { lastActiveAt: new Date() } })
+        .catch(() => {});
     }
 
     // schoolId desde el payload del JWT (rápido, sin joins).
