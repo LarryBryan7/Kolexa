@@ -17,6 +17,7 @@ import '../../classroom/data/repository/classroom_repository.dart';
 import 'novedades_detail_page.dart';
 import 'pendientes_page.dart';
 import '../../../core/utils/lima_date.dart';
+import '../../../core/utils/cached_avatar.dart';
 import 'home_docente_page.dart' show PerfilTab;
 import '../../threads/ui/inbox_page.dart';
 
@@ -2450,12 +2451,11 @@ class _AvatarCircle extends StatelessWidget {
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => _fallback(),
               )
-            : Image.network(
+            : cachedAvatarImage(
                 avatarUrl!,
                 width: size,
                 height: size,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _fallback(),
+                errorWidget: (_, __, ___) => _fallback(),
               ),
       );
     }
