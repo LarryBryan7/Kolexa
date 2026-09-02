@@ -186,6 +186,11 @@ model User {
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
   deletedAt           DateTime? @map("deleted_at") @db.Timestamptz()
+  // Para el punto verde/gris de "en línea" en chats: se actualiza en cada
+  // request autenticado (con throttle, ver JwtStrategy) — no requiere
+  // WebSocket ni tabla de sesiones nueva. "En línea" = actualizado hace
+  // menos de N minutos (ver ONLINE_THRESHOLD_MINUTES en threads.service.ts).
+  lastActiveAt        DateTime? @map("last_active_at") @db.Timestamptz()
 
   district                    District?             @relation(fields: [districtId], references: [id])
   userRoles                   UserRole[]

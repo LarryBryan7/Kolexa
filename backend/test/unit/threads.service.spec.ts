@@ -429,6 +429,74 @@ describe('ThreadsService — bandeja y no-leído', () => {
     // otra persona después de `earlier`.
     expect(inbox.find((t) => t.id === '1')?.unreadCount).toBe(2);
   });
+
+  it('otherParticipant.online: true si lastActiveAt es reciente (<3min), false si es viejo o null', async () => {
+    const recent = new Date(Date.now() - 60_000); // hace 1 minuto
+    const stale = new Date(Date.now() - 10 * 60_000); // hace 10 minutos
+    const { service } = makeService({
+      threadParticipant: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            lastReadAt: null,
+            mutedAt: null,
+            thread: {
+              id: 1n,
+              kind: 'direct',
+              subject: null,
+              studentId: null,
+              priority: 'normal',
+              lastMessageAt: new Date(),
+              student: null,
+              participants: [
+                { user: { id: TEACHER.id, firstName: 'Ana', lastName: null, avatar: null, lastActiveAt: recent } },
+              ],
+            },
+          },
+          {
+            lastReadAt: null,
+            mutedAt: null,
+            thread: {
+              id: 2n,
+              kind: 'direct',
+              subject: null,
+              studentId: null,
+              priority: 'normal',
+              lastMessageAt: new Date(),
+              student: null,
+              participants: [
+                { user: { id: OTHER_TEACHER.id, firstName: 'Luis', lastName: null, avatar: null, lastActiveAt: stale } },
+              ],
+            },
+          },
+          {
+            lastReadAt: null,
+            mutedAt: null,
+            thread: {
+              id: 3n,
+              kind: 'direct',
+              subject: null,
+              studentId: null,
+              priority: 'normal',
+              lastMessageAt: new Date(),
+              student: null,
+              participants: [
+                { user: { id: ADMIN.id, firstName: 'Director', lastName: null, avatar: null, lastActiveAt: null } },
+              ],
+            },
+          },
+        ]),
+        createMany: jest.fn(),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
+      threadMessage: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
+    });
+
+    const inbox = await service.getInbox(PARENT.id, SCHOOL_A);
+    expect(inbox.find((t) => t.id === '1')?.otherParticipant?.online).toBe(true);
+    expect(inbox.find((t) => t.id === '2')?.otherParticipant?.online).toBe(false);
+    expect(inbox.find((t) => t.id === '3')?.otherParticipant?.online).toBe(false);
+  });
 });
 
 describe('ThreadsService — acceso a un hilo por participación', () => {

@@ -16,7 +16,7 @@ import { JwtStrategy } from '../../src/modules/auth/strategies/jwt.strategy';
 function makeStrategy(userFindFirst: jest.Mock, userRoleFindFirst = jest.fn()) {
   const configService = { get: jest.fn().mockReturnValue('test-secret') } as any;
   const prisma = {
-    user: { findFirst: userFindFirst },
+    user: { findFirst: userFindFirst, update: jest.fn().mockResolvedValue(undefined) },
     userRole: { findFirst: userRoleFindFirst },
   } as any;
   return new JwtStrategy(configService, prisma);
@@ -102,5 +102,69 @@ describe('JwtStrategy — caché de usuario activo', () => {
     expect(r2.schoolId).toBe(7n);
     expect(findFirst).toHaveBeenCalledTimes(1); // el cache hit sí ahorra esta consulta
     expect(userRoleFindFirst).toHaveBeenCalledTimes(2); // el fallback de schoolId no se cachea
+  });
+});
+
+describe('JwtStrategy — throttle de lastActiveAt (punto verde/gris de "en línea")', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('actualiza lastActiveAt en la primera llamada', async () => {
+    const findFirst = jest.fn().mockResolvedValue({ id: 15n, email: 'bryan@kolexa.pe' });
+    const update = jest.fn().mockResolvedValue(undefined);
+    const configService = { get: jest.fn().mockReturnValue('test-secret') } as any;
+    const prisma = { user: { findFirst, update }, userRole: { findFirst: jest.fn() } } as any;
+    const strategy = new JwtStrategy(configService, prisma);
+
+    await strategy.validate({ sub: '15', roles: ['teacher'], schoolId: '1' });
+
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 15n },
+      data: { lastActiveAt: expect.any(Date) },
+    });
+  });
+
+  it('NO vuelve a escribir dentro de la ventana de throttle (60s), aunque el cache de 30s ya haya expirado', async () => {
+    jest.useFakeTimers();
+    const findFirst = jest.fn().mockResolvedValue({ id: 15n, email: 'bryan@kolexa.pe' });
+    const update = jest.fn().mockResolvedValue(undefined);
+    const configService = { get: jest.fn().mockReturnValue('test-secret') } as any;
+    const prisma = { user: { findFirst, update }, userRole: { findFirst: jest.fn() } } as any;
+    const strategy = new JwtStrategy(configService, prisma);
+
+    await strategy.validate({ sub: '15', roles: ['teacher'], schoolId: '1' });
+    jest.advanceTimersByTime(31_000); // pasó el TTL de 30s del cache de "activo", no el de 60s del write
+    await strategy.validate({ sub: '15', roles: ['teacher'], schoolId: '1' });
+
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it('vuelve a escribir pasados los 60s de throttle', async () => {
+    jest.useFakeTimers();
+    const findFirst = jest.fn().mockResolvedValue({ id: 15n, email: 'bryan@kolexa.pe' });
+    const update = jest.fn().mockResolvedValue(undefined);
+    const configService = { get: jest.fn().mockReturnValue('test-secret') } as any;
+    const prisma = { user: { findFirst, update }, userRole: { findFirst: jest.fn() } } as any;
+    const strategy = new JwtStrategy(configService, prisma);
+
+    await strategy.validate({ sub: '15', roles: ['teacher'], schoolId: '1' });
+    jest.advanceTimersByTime(60_001);
+    await strategy.validate({ sub: '15', roles: ['teacher'], schoolId: '1' });
+
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it('un update que falla no rompe el request (fire-and-forget)', async () => {
+    const findFirst = jest.fn().mockResolvedValue({ id: 15n, email: 'bryan@kolexa.pe' });
+    const update = jest.fn().mockRejectedValue(new Error('db down'));
+    const configService = { get: jest.fn().mockReturnValue('test-secret') } as any;
+    const prisma = { user: { findFirst, update }, userRole: { findFirst: jest.fn() } } as any;
+    const strategy = new JwtStrategy(configService, prisma);
+
+    await expect(
+      strategy.validate({ sub: '15', roles: ['teacher'], schoolId: '1' }),
+    ).resolves.toEqual({ sub: 15n, email: 'bryan@kolexa.pe', roles: ['teacher'], schoolId: 1n });
   });
 });
