@@ -9,6 +9,7 @@
 import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'core/db/app_database.dart';
 import 'core/services/push_notifications_service.dart';
 import 'core/services/onboarding_service.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -19,10 +20,14 @@ import 'core/theme/app_sizes.dart';
 import 'core/api/api_client.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/bloc/auth_event.dart';
+import 'features/auth/bloc/auth_state.dart';
 import 'features/auth/data/datasources/auth_remote_datasource.dart';
 import 'features/auth/data/repositories/auth_repository.dart';
 import 'features/classroom/bloc/classroom_bloc.dart';
 import 'features/classroom/data/repository/classroom_repository.dart';
+import 'features/threads/ui/inbox_page.dart';
+import 'features/threads/ui/new_message_page.dart';
+import 'features/threads/ui/thread_page.dart';
 import 'core/api/interceptors/auth_interceptor.dart';
 
 void main() async {
@@ -61,6 +66,7 @@ class _KolexaAppState extends State<KolexaApp> {
   late final ApiClient _apiClient;
   late final AuthBloc _authBloc;
   late final ClassroomBloc _classroomBloc;
+  late final StreamSubscription<AuthState> _authDbSub;
 
   // Notificación pendiente de procesar. Se guarda cuando la app se abre
   // desde una notificación (terminated) ANTES de que el router exista,
@@ -73,7 +79,21 @@ class _KolexaAppState extends State<KolexaApp> {
     _apiClient = ApiClient();
     final authDataSource = AuthRemoteDataSource(_apiClient);
     final authRepository = AuthRepository(authDataSource);
-    _authBloc = AuthBloc(authRepository)..add(const CheckAuthEvent());
+    _authBloc = AuthBloc(authRepository);
+    // Aísla los datos locales (SQLite) entre cuentas del mismo dispositivo:
+    // cada usuario autenticado tiene su propio archivo (ver
+    // AppDatabase.openForUser), y al cerrar sesión se cierra esa conexión
+    // y se limpian los caches en memoria de mensajería — así una cuenta
+    // distinta que inicie sesión en el MISMO proceso nunca ve, ni por un
+    // instante, hilos/mensajes/contactos de la cuenta anterior. Escuchar
+    // el stream (no un BlocListener en el árbol) cubre los 3 caminos que
+    // terminan en AuthAuthenticated/AuthUnauthenticated sin importar qué
+    // pantalla esté activa: login interactivo, restauración de sesión en
+    // frío (CheckAuthEvent, más abajo) y logout forzado por token expirado
+    // (ver AuthInterceptor.onSessionExpired, que dispara el mismo
+    // LogoutEvent que un logout manual).
+    _authDbSub = _authBloc.stream.listen(_handleAuthStateChangeForLocalData);
+    _authBloc.add(const CheckAuthEvent());
     AuthInterceptor.onSessionExpired = () => _authBloc.add(const LogoutEvent());
     _classroomBloc = ClassroomBloc(ClassroomRepository(_apiClient));
 
@@ -88,6 +108,17 @@ class _KolexaAppState extends State<KolexaApp> {
     // token solo se guardaba en el login, así que reinstalar la app o una
     // rotación normal de Firebase dejaba el push muerto en silencio.
     PushNotificationsService.instance.onTokenRefresh = authRepository.syncPushToken;
+  }
+
+  Future<void> _handleAuthStateChangeForLocalData(AuthState state) async {
+    if (state is AuthAuthenticated) {
+      await AppDatabase.instance.openForUser(state.user.id);
+    } else if (state is AuthUnauthenticated) {
+      InboxPage.clearCache();
+      ThreadPage.clearCache();
+      NewMessagePage.clearCache();
+      await AppDatabase.instance.close();
+    }
   }
 
   // Decide a dónde navegar cuando el usuario toca una notificación.
@@ -123,6 +154,7 @@ class _KolexaAppState extends State<KolexaApp> {
 
   @override
   void dispose() {
+    _authDbSub.cancel();
     _authBloc.close();
     _classroomBloc.close();
     super.dispose();

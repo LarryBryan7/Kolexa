@@ -91,6 +91,20 @@ class InboxPage extends StatefulWidget {
 
   @override
   State<InboxPage> createState() => _InboxPageState();
+
+  // Limpia el cache en memoria de la bandeja — se llama al cerrar sesión
+  // (ver main.dart) para que, si otra cuenta inicia sesión en el MISMO
+  // proceso de la app (sin matarla), no vea ni por un instante los hilos
+  // de la cuenta anterior mientras cargan los suyos. El aislamiento en
+  // disco (ver AppDatabase.openForUser) no alcanza por sí solo: este
+  // cache vive en memoria, no en SQLite.
+  static void clearCache() => _InboxPageState._cachedThreads = null;
+
+  @visibleForTesting
+  static List<ThreadSummary>? get debugCachedThreads => _InboxPageState._cachedThreads;
+
+  @visibleForTesting
+  static set debugCachedThreads(List<ThreadSummary>? value) => _InboxPageState._cachedThreads = value;
 }
 
 // Chips de filtro del diseño: solo "Mensajes" tiene datos reales detrás

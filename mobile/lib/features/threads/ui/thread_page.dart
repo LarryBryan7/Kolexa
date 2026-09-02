@@ -218,6 +218,15 @@ class ThreadPage extends StatefulWidget {
       otherLastActiveAt: existing?.otherLastActiveAt,
     );
   }
+
+  // Limpia el cache en memoria de todas las conversaciones — se llama al
+  // cerrar sesión (ver main.dart), mismo motivo que InboxPage.clearCache():
+  // el aislamiento en disco (AppDatabase.openForUser) no cubre lo que
+  // vive en memoria del proceso.
+  static void clearCache() => _ThreadPageState._cache.clear();
+
+  @visibleForTesting
+  static Map<String, ThreadMessagesPage> get debugCache => _ThreadPageState._cache;
 }
 
 class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {

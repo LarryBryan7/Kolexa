@@ -115,6 +115,10 @@ dev_dependencies:
   flutter_lints: ^3.0.0
   # bloc_test: utilidades para testear BLoCs
   bloc_test: ^9.1.0
+  # sqflite_common_ffi: implementación de sqflite sobre SQLite nativo del
+  # host (no un canal de plataforma Android/iOS) — permite correr contra
+  # una base real en `flutter test`, sin necesidad de un emulador.
+  sqflite_common_ffi: ^2.4.2+1
   # mocktail: crear mocks en los tests sin generación de código
   mocktail: ^1.0.0
   flutter_launcher_icons: ^0.14.4

@@ -25,6 +25,16 @@ class NewMessagePage extends StatefulWidget {
 
   @override
   State<NewMessagePage> createState() => _NewMessagePageState();
+
+  // Limpia el cache en memoria de contactos — se llama al cerrar sesión
+  // (ver main.dart), mismo motivo que InboxPage.clearCache().
+  static void clearCache() => _NewMessagePageState._cachedContacts = null;
+
+  @visibleForTesting
+  static List<Contact>? get debugCachedContacts => _NewMessagePageState._cachedContacts;
+
+  @visibleForTesting
+  static set debugCachedContacts(List<Contact>? value) => _NewMessagePageState._cachedContacts = value;
 }
 
 class _NewMessagePageState extends State<NewMessagePage> {
