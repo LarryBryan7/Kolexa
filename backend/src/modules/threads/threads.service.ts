@@ -459,8 +459,6 @@ export class ThreadsService {
     otherLastReadAt: Date | null;
     otherLastActiveAt: Date | null;
   }> {
-    await this.assertParticipant(threadId, userId);
-
     // El doble check se arma en el cliente comparando el `sentAt` de cada
     // mensaje propio contra DOS señales de la otra persona — no hay tabla
     // de "leído/entregado por mensaje":
@@ -471,7 +469,19 @@ export class ThreadsService {
     //     haya abierto este hilo puntual). Mismo dato que usa el punto
     //     verde/gris de presencia (ver JwtStrategy).
     // Cualquiera de las dos alcanza para el doble check.
-    const [rows, otherParticipant] = await Promise.all([
+    //
+    // `assertParticipant` va DENTRO de este mismo Promise.all (no antes):
+    // es solo un chequeo de autorización, su resultado no se usa para nada
+    // más, y ninguna de las otras dos consultas depende de él (ambas solo
+    // necesitan `threadId`). Antes era una etapa secuencial de más — contra
+    // el pooler cross-región (Railway ↔ Supabase São Paulo) eso son
+    // ~350-400ms pagados en cada apertura de conversación. Si no soy
+    // participante, `assertParticipant` rechaza y el `Promise.all` entero
+    // rechaza con ese mismo NotFoundException, aunque las otras dos ya se
+    // hayan disparado en paralelo — no importa, nunca se llega a construir
+    // la respuesta con esos datos.
+    const [, rows, otherParticipant] = await Promise.all([
+      this.assertParticipant(threadId, userId),
       this.prisma.threadMessage.findMany({
         where: {
           threadId,

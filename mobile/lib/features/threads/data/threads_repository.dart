@@ -206,6 +206,14 @@ class ThreadMessage {
       );
 }
 
+// Resultado de POST .../messages: solo lo que el backend realmente sabe
+// que el cliente no puede inventar (id real, sentAt real del servidor).
+class SentMessage {
+  final String id;
+  final DateTime sentAt;
+  const SentMessage({required this.id, required this.sentAt});
+}
+
 // Resultado de GET .../messages: los mensajes + dos señales del OTRO
 // participante para el doble check (comparando contra el sentAt de cada
 // mensaje propio): `otherLastReadAt` (leyó este hilo) y
@@ -277,8 +285,20 @@ class ThreadsRepository {
     );
   }
 
-  Future<void> sendMessage(String threadId, String body) async {
-    await _client.post('threads/$threadId/messages', data: {'body': body});
+  // Devuelve el id/sentAt reales del mensaje ya creado — el resto
+  // (senderId, body) ya lo conoce quien llama (es el usuario actual, con
+  // el texto que acaba de mandar), así que con esto alcanza para
+  // reconciliar la burbuja pendiente SIN pedir toda la conversación de
+  // nuevo (ver ThreadPage._sendBody: antes hacía un getMessages() extra
+  // completo después de cada envío, duplicando el round-trip a una base
+  // que ya está lejos — sa-east-1 — por cada mensaje mandado).
+  Future<SentMessage> sendMessage(String threadId, String body) async {
+    final r = await _client.post('threads/$threadId/messages', data: {'body': body});
+    final data = r.data as Map<String, dynamic>;
+    return SentMessage(
+      id: data['id'] as String,
+      sentAt: DateTime.parse(data['sentAt'] as String),
+    );
   }
 
   // Autocompletado del "@" en el compositor: tareas del aula del alumno de
