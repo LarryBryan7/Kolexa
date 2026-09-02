@@ -158,35 +158,31 @@ export class HomeworkService {
   // director (school_admin) del mismo colegio del alumno.
   // Muestra todas las tareas pendientes y recientes.
   async getStudentHomework(studentId: number, user: UserPayload) {
-    const student = await this.prisma.student.findUnique({
-      where: { id: studentId },
-      select: { schoolId: true },
-    });
-    if (!student) throw new NotFoundException('Alumno no encontrado');
-
-    if (!isSchoolAdminOf(user, student.schoolId)) {
-      // Verificar que el padre tiene acceso a este alumno
-      const relationship = await this.prisma.userStudent.findFirst({
-        where: { userId: user.sub, studentId },
-      });
-      if (!relationship) {
-        throw new ForbiddenException('No tienes acceso a las tareas de este alumno');
-      }
-    }
-
-    return this.prisma.studentHomework.findMany({
-      where: { studentId },
-      include: {
-        homework: {
-          include: {
-            course: { select: { name: true } },
-            classroom: { select: { name: true, grade: true, section: true } },
-            teacher: { select: { firstName: true, lastName: true } },
+    // Las 3 consultas son independientes (ninguna necesita el RESULTADO
+    // de otra) — antes se esperaban en 3 etapas secuenciales. El chequeo
+    // de acceso se aplica sobre los resultados ya resueltos.
+    const [student, relationship, homework] = await Promise.all([
+      this.prisma.student.findUnique({ where: { id: studentId }, select: { schoolId: true } }),
+      this.prisma.userStudent.findFirst({ where: { userId: user.sub, studentId } }),
+      this.prisma.studentHomework.findMany({
+        where: { studentId },
+        include: {
+          homework: {
+            include: {
+              course: { select: { name: true } },
+              classroom: { select: { name: true, grade: true, section: true } },
+              teacher: { select: { firstName: true, lastName: true } },
+            },
           },
         },
-      },
-      orderBy: { homework: { dueDate: 'asc' } },
-    });
+        orderBy: { homework: { dueDate: 'asc' } },
+      }),
+    ]);
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+    if (!isSchoolAdminOf(user, student.schoolId) && !relationship) {
+      throw new ForbiddenException('No tienes acceso a las tareas de este alumno');
+    }
+    return homework;
   }
 
   // ── updateHomework ────────────────────────────────────────

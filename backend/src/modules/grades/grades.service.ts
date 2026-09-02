@@ -200,27 +200,41 @@ export class GradesService {
       orderBy: { student: { lastName: 'asc' } },
     });
 
-    // Para cada alumno, traer sus notas en el periodo
-    const report = await Promise.all(
-      enrollments.map(async (e) => {
-        const grades = await this.prisma.grade.findMany({
-          where: { studentId: e.studentId, periodId },
-          include: { course: { select: { name: true } } },
-        });
+    // Antes: una query de grade.findMany POR ALUMNO (N+1) dentro de un
+    // Promise.all — con connection_limit=5 en el pooler, un aula de más
+    // de 5 alumnos ya generaba cola real esperando conexión. Una sola
+    // query con `studentId: { in }` trae las notas de todos, se agrupan
+    // por alumno en memoria.
+    const studentIds = enrollments.map((e) => e.studentId);
+    const allGrades =
+      studentIds.length > 0
+        ? await this.prisma.grade.findMany({
+            where: { studentId: { in: studentIds }, periodId },
+            include: { course: { select: { name: true } } },
+          })
+        : [];
+    const gradesByStudent = new Map<string, typeof allGrades>();
+    for (const g of allGrades) {
+      const key = g.studentId.toString();
+      const arr = gradesByStudent.get(key);
+      if (arr) arr.push(g);
+      else gradesByStudent.set(key, [g]);
+    }
 
-        // Promedio del alumno en este periodo
-        const avg =
-          grades.length > 0
-            ? grades.reduce((sum, g) => sum + Number(g.grade ?? 0), 0) / grades.length
-            : null;
+    const report = enrollments.map((e) => {
+      const grades = gradesByStudent.get(e.studentId.toString()) ?? [];
+      // Promedio del alumno en este periodo
+      const avg =
+        grades.length > 0
+          ? grades.reduce((sum, g) => sum + Number(g.grade ?? 0), 0) / grades.length
+          : null;
 
-        return {
-          student: e.student,
-          grades,
-          average: avg ? Math.round(avg * 10) / 10 : null, // 1 decimal
-        };
-      }),
-    );
+      return {
+        student: e.student,
+        grades,
+        average: avg ? Math.round(avg * 10) / 10 : null, // 1 decimal
+      };
+    });
 
     return report;
   }
