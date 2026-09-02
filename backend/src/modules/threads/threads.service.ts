@@ -39,7 +39,7 @@ export interface ThreadSummary {
   unreadCount: number;
   muted: boolean;
   otherParticipant: { id: string; name: string; avatar: string | null; online: boolean } | null;
-  lastMessage: { body: string; senderId: string; sentAt: Date } | null;
+  lastMessage: { body: string; senderId: string; sentAt: Date; delivered: boolean } | null;
 }
 
 export interface ThreadMessageView {
@@ -99,6 +99,7 @@ export class ThreadsService {
             participants: {
               where: { userId: { not: userId } },
               select: {
+                lastReadAt: true,
                 user: {
                   select: { id: true, firstName: true, lastName: true, avatar: true, lastActiveAt: true },
                 },
@@ -146,8 +147,16 @@ export class ThreadsService {
     return parts
       .map((p) => {
         const t = p.thread;
-        const other = t.participants[0]?.user ?? null;
+        const otherPart = t.participants[0] ?? null;
+        const other = otherPart?.user ?? null;
         const last = lastByThread.get(t.id.toString()) ?? null;
+        // Doble check del último mensaje (solo tiene sentido si lo mandé
+        // yo): la otra persona lo leyó, o estuvo activa/online después de
+        // que se envió — mismas dos señales que getMessages, ver ahí.
+        const delivered =
+          !!last &&
+          ((!!otherPart?.lastReadAt && otherPart.lastReadAt >= last.sentAt) ||
+            (!!other?.lastActiveAt && other.lastActiveAt >= last.sentAt));
         return {
           id: t.id.toString(),
           kind: t.kind,
@@ -172,7 +181,12 @@ export class ThreadsService {
               }
             : null,
           lastMessage: last
-            ? { body: this.stripMentions(last.body), senderId: last.senderId.toString(), sentAt: last.sentAt }
+            ? {
+                body: this.stripMentions(last.body),
+                senderId: last.senderId.toString(),
+                sentAt: last.sentAt,
+                delivered,
+              }
             : null,
         };
       })
@@ -444,14 +458,23 @@ export class ThreadsService {
     userId: bigint,
     before?: bigint,
     limit = 30,
-  ): Promise<{ messages: ThreadMessageView[]; otherLastReadAt: Date | null }> {
+  ): Promise<{
+    messages: ThreadMessageView[];
+    otherLastReadAt: Date | null;
+    otherLastActiveAt: Date | null;
+  }> {
     await this.assertParticipant(threadId, userId);
 
-    // El "doble check" de leído se arma en el cliente comparando el
-    // `sentAt` de cada mensaje propio contra esto — no hay una tabla de
-    // "leído por mensaje", el hilo ya guarda un solo `lastReadAt` por
-    // participante (ver auditoría de mensajería: no-leído nunca se
-    // cuenta por fila, se compara). Ambas consultas son independientes.
+    // El doble check se arma en el cliente comparando el `sentAt` de cada
+    // mensaje propio contra DOS señales de la otra persona — no hay tabla
+    // de "leído/entregado por mensaje":
+    //   - lastReadAt: abrió ESTE hilo después de que se envió (leído de
+    //     verdad).
+    //   - lastActiveAt: hizo cualquier request autenticado después de que
+    //     se envió (su app está online/con conexión — "le llegó" aunque no
+    //     haya abierto este hilo puntual). Mismo dato que usa el punto
+    //     verde/gris de presencia (ver JwtStrategy).
+    // Cualquiera de las dos alcanza para el doble check.
     const [rows, otherParticipant] = await Promise.all([
       this.prisma.threadMessage.findMany({
         where: {
@@ -472,7 +495,7 @@ export class ThreadsService {
       }),
       this.prisma.threadParticipant.findFirst({
         where: { threadId, userId: { not: userId } },
-        select: { lastReadAt: true },
+        select: { lastReadAt: true, user: { select: { lastActiveAt: true } } },
       }),
     ]);
 
@@ -487,7 +510,11 @@ export class ThreadsService {
       editedAt: m.editedAt,
     }));
 
-    return { messages, otherLastReadAt: otherParticipant?.lastReadAt ?? null };
+    return {
+      messages,
+      otherLastReadAt: otherParticipant?.lastReadAt ?? null,
+      otherLastActiveAt: otherParticipant?.user?.lastActiveAt ?? null,
+    };
   }
 
   // Formato de mención: "@[Título de la tarea](homework:123)" para tareas

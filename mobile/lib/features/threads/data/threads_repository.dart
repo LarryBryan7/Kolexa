@@ -75,12 +75,22 @@ class ThreadPreview {
   final String body;
   final String senderId;
   final DateTime sentAt;
-  const ThreadPreview({required this.body, required this.senderId, required this.sentAt});
+  // Doble check en la bandeja: solo importa cuando `senderId` soy yo — ver
+  // ThreadsService.getInbox (misma señal que otherLastReadAt/otherLastActiveAt
+  // en el detalle del chat: leyó el hilo, o estuvo online después del envío).
+  final bool delivered;
+  const ThreadPreview({
+    required this.body,
+    required this.senderId,
+    required this.sentAt,
+    this.delivered = false,
+  });
 
   factory ThreadPreview.fromJson(Map<String, dynamic> json) => ThreadPreview(
         body: json['body'] as String,
         senderId: json['senderId'] as String,
         sentAt: DateTime.parse(json['sentAt'] as String),
+        delivered: json['delivered'] as bool? ?? false,
       );
 }
 
@@ -196,13 +206,20 @@ class ThreadMessage {
       );
 }
 
-// Resultado de GET .../messages: los mensajes + el lastReadAt del OTRO
-// participante, para poder pintar el doble check de leído en el cliente
-// (comparando contra el sentAt de cada mensaje propio).
+// Resultado de GET .../messages: los mensajes + dos señales del OTRO
+// participante para el doble check (comparando contra el sentAt de cada
+// mensaje propio): `otherLastReadAt` (leyó este hilo) y
+// `otherLastActiveAt` (estuvo online/con conexión, aunque no haya abierto
+// este hilo puntual — mismo dato que el punto verde/gris de presencia).
 class ThreadMessagesPage {
   final List<ThreadMessage> messages;
   final DateTime? otherLastReadAt;
-  const ThreadMessagesPage({required this.messages, required this.otherLastReadAt});
+  final DateTime? otherLastActiveAt;
+  const ThreadMessagesPage({
+    required this.messages,
+    required this.otherLastReadAt,
+    required this.otherLastActiveAt,
+  });
 }
 
 class ThreadsRepository {
@@ -250,11 +267,13 @@ class ThreadsRepository {
     );
     final data = r.data as Map<String, dynamic>;
     final otherLastReadAt = data['otherLastReadAt'] as String?;
+    final otherLastActiveAt = data['otherLastActiveAt'] as String?;
     return ThreadMessagesPage(
       messages: (data['messages'] as List<dynamic>)
           .map((e) => ThreadMessage.fromJson(e as Map<String, dynamic>))
           .toList(),
       otherLastReadAt: otherLastReadAt != null ? DateTime.parse(otherLastReadAt) : null,
+      otherLastActiveAt: otherLastActiveAt != null ? DateTime.parse(otherLastActiveAt) : null,
     );
   }
 
