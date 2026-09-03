@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/utils/cached_avatar.dart';
+import '../data/staleness_guard.dart';
 import '../data/threads_local_store.dart';
 import '../data/threads_repository.dart';
 import 'thread_page.dart';
@@ -28,13 +29,21 @@ class NewMessagePage extends StatefulWidget {
 
   // Limpia el cache en memoria de contactos — se llama al cerrar sesión
   // (ver main.dart), mismo motivo que InboxPage.clearCache().
-  static void clearCache() => _NewMessagePageState._cachedContacts = null;
+  static void clearCache() {
+    _NewMessagePageState._cachedContacts = null;
+    // Invalida cualquier _refresh()/_loadFromDisk() en vuelo de la cuenta
+    // que se está cerrando — ver staleness_guard.dart.
+    _NewMessagePageState._guard.invalidateAccount();
+  }
 
   @visibleForTesting
   static List<Contact>? get debugCachedContacts => _NewMessagePageState._cachedContacts;
 
   @visibleForTesting
   static set debugCachedContacts(List<Contact>? value) => _NewMessagePageState._cachedContacts = value;
+
+  @visibleForTesting
+  static StalenessGuard get debugGuard => _NewMessagePageState._guard;
 }
 
 class _NewMessagePageState extends State<NewMessagePage> {
@@ -44,6 +53,9 @@ class _NewMessagePageState extends State<NewMessagePage> {
   // pantalla — se muestra lo último conocido al instante y se refresca
   // solo en segundo plano.
   static List<Contact>? _cachedContacts;
+
+  // Guard de "respuesta obsoleta" — ver staleness_guard.dart.
+  static final _guard = StalenessGuard();
 
   late final ThreadsRepository _repo;
   List<Contact>? _contacts;
@@ -64,8 +76,9 @@ class _NewMessagePageState extends State<NewMessagePage> {
   // conocida (guardada la vez anterior) alcanza para mostrar algo real de
   // inmediato en vez del spinner, incluso recién abierta la app.
   Future<void> _loadFromDisk() async {
+    final epoch = _guard.beginAccountEpoch();
     final local = await ThreadsLocalStore.loadContacts();
-    if (!mounted || local.isEmpty || _contacts != null) return;
+    if (!mounted || !_guard.isAccountCurrent(epoch) || local.isEmpty || _contacts != null) return;
     _cachedContacts = local;
     setState(() => _contacts = local);
   }
@@ -75,11 +88,16 @@ class _NewMessagePageState extends State<NewMessagePage> {
   // pide de nuevo. El spinner de pantalla completa solo aparece si de
   // verdad no hay nada que mostrar todavía (primera vez en la sesión).
   Future<void> _refresh({bool showErrorIfEmpty = false}) async {
+    final epoch = _guard.beginAccountEpoch();
+    final seq = _guard.beginSequence();
     if (_contacts == null) setState(() => _loadingFirstTime = true);
     try {
       final contacts = await _repo.getContacts();
+      if (!_guard.isCurrent(epoch, seq)) return;
       _cachedContacts = contacts;
-      ThreadsLocalStore.saveContacts(contacts);
+      ThreadsLocalStore.saveContacts(contacts).catchError((e, st) {
+        debugPrint('[NewMessagePage] saveContacts falló: $e\n$st');
+      });
       if (!mounted) return;
       setState(() {
         _contacts = contacts;
@@ -87,6 +105,7 @@ class _NewMessagePageState extends State<NewMessagePage> {
         _loadingFirstTime = false;
       });
     } catch (e) {
+      if (!_guard.isCurrent(epoch, seq)) return;
       if (!mounted) return;
       setState(() => _loadingFirstTime = false);
       if (showErrorIfEmpty && _contacts == null) {
