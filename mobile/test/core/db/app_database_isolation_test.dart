@@ -10,14 +10,19 @@
 // El fix: cada usuario vive en su propio archivo (`kolexa_<userId>.db`),
 // abierto/cerrado explícitamente vía openForUser()/close() en reacción al
 // AuthState (ver main.dart). Estos tests corren contra SQLite real (no un
-// mock) usando sqflite_common_ffi, que implementa el mismo API de sqflite
-// sobre el motor SQLite del host — así se prueba el comportamiento real
-// de archivos, no una simulación.
+// mock): AppDatabase usa Drift (NativeDatabase) sobre un archivo real del
+// host — así se prueba el comportamiento real de archivos, no una
+// simulación. Migrado de sqflite a Drift: la lógica de estos tests no
+// cambió, solo el bootstrap (Drift no necesita ningún registro de
+// factory global como sqflite_common_ffi).
 // ============================================================
+
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite/sqflite.dart' show getDatabasesPath, databaseFactory;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart' show databaseFactoryFfi;
 import 'package:kolexa/core/db/app_database.dart';
 import 'package:kolexa/features/threads/data/threads_local_store.dart';
 import 'package:kolexa/features/threads/data/threads_repository.dart';
@@ -32,12 +37,9 @@ const _testUserIds = [9001, 9002, 9003, 9004, 9005, 9006, 9007];
 
 Future<void> _wipeTestDatabases() async {
   for (final id in _testUserIds) {
-    final path = join(await databaseFactory.getDatabasesPath(), 'kolexa_$id.db');
-    try {
-      await databaseFactory.deleteDatabase(path);
-    } catch (_) {
-      // No existía todavía — nada que borrar.
-    }
+    final path = join(await getDatabasesPath(), 'kolexa_$id.db');
+    final file = File(path);
+    if (await file.exists()) await file.delete();
   }
 }
 
@@ -53,8 +55,10 @@ ThreadMessage _message(String id, String body) => ThreadMessage(
     );
 
 void main() {
+  // Solo para que `getDatabasesPath()` resuelva sin canal de plataforma
+  // real (ver import arriba) — Drift, que maneja la persistencia en sí,
+  // no necesita ningún registro global.
   setUpAll(() {
-    sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   });
 
@@ -171,8 +175,8 @@ void main() {
       final openSecond = AppDatabase.instance.openForUser(9006);
       await Future.wait([openFirst, openSecond]);
 
-      final db = await AppDatabase.instance.database;
-      expect(db.path, contains('kolexa_9006'));
+      await AppDatabase.instance.database; // fuerza a esperar la apertura en vuelo
+      expect(AppDatabase.instance.debugCurrentUserId, 9006);
 
       // Y la cuenta que "perdió la carrera" no queda con datos mezclados:
       // escribir ahora debe ir al archivo de 9006, no al de 9005.

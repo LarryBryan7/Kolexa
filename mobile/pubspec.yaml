@@ -59,11 +59,20 @@ dependencies:
   # Los tokens JWT expiran en 1h y el sandbox de Android ya protege los datos.
   shared_preferences: ^2.2.0
 
-  # sqflite: base de datos SQLite local. Se usa para la pestaña de
-  # mensajes (bandeja, conversaciones, contactos) — igual que WhatsApp, la
-  # UI lee de acá primero (disco, instantáneo incluso recién abierta la
-  # app) y el backend solo se consulta para traer lo nuevo en segundo
-  # plano. No requiere configuración nativa extra en Android/iOS.
+  # drift: capa type-safe sobre SQLite. Se usa para la pestaña de mensajes
+  # (bandeja, conversaciones, contactos) — igual que WhatsApp, la UI lee
+  # de acá primero (disco, instantáneo incluso recién abierta la app) y el
+  # backend solo se consulta para traer lo nuevo en segundo plano.
+  drift: ^2.20.0
+  # sqlite3_flutter_libs: bundlea el binario nativo de SQLite que Drift
+  # necesita en Android/iOS (Drift habla con SQLite via FFI, no via un
+  # plugin de plataforma como hacía sqflite) — requisito de infraestructura,
+  # no una funcionalidad nueva.
+  sqlite3_flutter_libs: ^0.5.24
+  # sqflite: ya NO se usa para leer/escribir (eso ahora es todo Drift) —
+  # se mantiene solo por `getDatabasesPath()`, para que el archivo de cada
+  # cuenta siga en el mismo lugar exacto de siempre y no se pierda el
+  # cache ya guardado de los usuarios existentes al migrar el motor.
   sqflite: ^2.3.3+1
   path: ^1.9.0
 
@@ -115,9 +124,19 @@ dev_dependencies:
   flutter_lints: ^3.0.0
   # bloc_test: utilidades para testear BLoCs
   bloc_test: ^9.1.0
-  # sqflite_common_ffi: implementación de sqflite sobre SQLite nativo del
-  # host (no un canal de plataforma Android/iOS) — permite correr contra
-  # una base real en `flutter test`, sin necesidad de un emulador.
+  # drift_dev + build_runner: generan el código type-safe de Drift
+  # (drift/database.dart) a partir de las tablas declaradas — mismo
+  # patrón de codegen que ya usa este proyecto para flutter_launcher_icons
+  # (`dart run <paquete>`).
+  drift_dev: ^2.20.0
+  build_runner: ^2.4.0
+  # sqflite_common_ffi: en los tests, `getDatabasesPath()` (que se
+  # mantiene de sqflite — ver core/db/app_database.dart) internamente
+  # delega al `databaseFactory` intercambiable de sqflite; sin esto,
+  # `flutter test` intentaría resolverlo vía canal de plataforma real,
+  # que no existe fuera de un dispositivo. Los tests NO usan la API de
+  # `Database` de sqflite_common_ffi para nada — Drift maneja todo el
+  # resto de la persistencia de forma independiente de este paquete.
   sqflite_common_ffi: ^2.4.2+1
   # mocktail: crear mocks en los tests sin generación de código
   mocktail: ^1.0.0
