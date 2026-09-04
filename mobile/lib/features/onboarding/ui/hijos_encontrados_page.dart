@@ -3,8 +3,9 @@
 // ============================================================
 // Se muestra UNA sola vez, justo después del primer login con Google
 // exitoso (ver AuthBloc._onGoogleLogin / AuthState.isFirstGoogleLogin).
-// Lista los hijos ya vinculados y deja agregarles una foto de perfil,
-// opcional — "continuar" siempre funciona, tengan foto o no.
+// Lista los hijos ya vinculados y OBLIGA a subirles una foto de perfil:
+// "Continuar" queda deshabilitado hasta que todos tengan avatarUrl. Si ya
+// la traían (login posterior, o ya se la habían subido antes), pasa directo.
 //
 // Con un solo hijo usa el layout "04c" (tarjeta grande, texto
 // personalizado con su nombre); con dos o más, el layout "04b" (lista de
@@ -122,7 +123,10 @@ class _HijosEncontradosPageState extends State<HijosEncontradosPage> {
         avatarUrl: avatarUrl,
       );
 
+  bool get _allPhotosUploaded => _children.every((c) => c.avatarUrl != null);
+
   void _onContinue() {
+    if (!_allPhotosUploaded) return;
     // Solo re-cachea si al menos una foto cambió — evita una escritura de
     // SharedPreferences innecesaria en el caso común (nadie tocó fotos).
     final changed = _children.any((c) {
@@ -177,8 +181,8 @@ class _HijosEncontradosPageState extends State<HijosEncontradosPage> {
               const SizedBox(height: 8),
               Text(
                 isSingle
-                    ? 'Agrega una foto para reconocer a ${_children.first.firstName} más fácil en la app'
-                    : 'Agrégales una foto para reconocerlos más fácil en la app',
+                    ? 'Sube una foto de ${_children.first.firstName} para continuar'
+                    : 'Sube una foto de cada hijo para continuar',
                 style: const TextStyle(fontSize: 12, color: _kTextGray),
               ),
               const SizedBox(height: 20),
@@ -216,10 +220,12 @@ class _HijosEncontradosPageState extends State<HijosEncontradosPage> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _kPrimary,
                     foregroundColor: Colors.white,
+                    disabledBackgroundColor: _kPrimary.withValues(alpha: 0.35),
+                    disabledForegroundColor: Colors.white,
                     elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  onPressed: _onContinue,
+                  onPressed: _allPhotosUploaded ? _onContinue : null,
                   child: const Text('Continuar', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                 ),
               ),
@@ -236,7 +242,11 @@ class _HijosEncontradosPageState extends State<HijosEncontradosPage> {
                   const SizedBox(width: 7),
                   Expanded(
                     child: Text(
-                      'Edítalo cuando quieras desde la pantalla de inicio',
+                      _allPhotosUploaded
+                          ? 'Edítalo cuando quieras desde la pantalla de inicio'
+                          : (isSingle
+                              ? 'Toca la foto para poder continuar'
+                              : 'Toca cada foto para poder continuar'),
                       style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                     ),
                   ),
