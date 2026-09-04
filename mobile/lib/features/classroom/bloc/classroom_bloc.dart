@@ -106,7 +106,10 @@ class ClassroomBloc extends Bloc<ClassroomEvent, ClassroomState> {
   Future<void> _onConnect(ConnectClassroom event, Emitter<ClassroomState> emit) async {
     try {
       final url = await _repo.getAuthUrl(event.studentId);
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      // inAppBrowserView (Custom Tabs): mismo motivo que en las otras 2
+      // pantallas que conectan Classroom — evita el reinicio en frío al volver
+      // del consentimiento de Google.
+      await launchUrl(Uri.parse(url), mode: LaunchMode.inAppBrowserView);
     } catch (e) {
       emit(ClassroomError('No se pudo abrir el navegador'));
     }

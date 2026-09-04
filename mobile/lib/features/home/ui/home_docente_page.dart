@@ -260,7 +260,13 @@ class _HomeDocentePageState extends State<HomeDocentePage>
     try {
       final repo = TeacherRepository(context.read<ApiClient>());
       final url = await repo.getClassroomAuthUrl();
-      final launched = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      // inAppBrowserView (Custom Tabs en Android) en vez de externalApplication:
+      // este último abre el navegador como una app aparte, y Android puede
+      // matar el proceso de Kolexa mientras está en segundo plano — al volver
+      // del consentimiento de Google, la app arrancaba en frío de nuevo
+      // (splash otra vez) aunque el celular fuera gama alta. Custom Tabs corre
+      // dentro de la misma tarea, así que ya no se ve como "otra app".
+      final launched = await launchUrl(Uri.parse(url), mode: LaunchMode.inAppBrowserView);
       if (!launched && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No se pudo abrir el navegador')),
