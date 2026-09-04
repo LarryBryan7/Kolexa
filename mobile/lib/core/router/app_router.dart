@@ -146,9 +146,13 @@ class AppRouter {
 
         // Mientras AuthBloc resuelve la sesión: quedarse en el splash
         // propio (ver _SplashPage) — nunca dejar que se vea login/home de
-        // fondo antes de saber a cuál corresponde ir.
+        // fondo antes de saber a cuál corresponde ir. PERO solo aplica al
+        // arranque en frío: si ya estás en LoginPage (ej. tocaste "Iniciar
+        // sesión con Google" y emitió AuthLoading), esa pantalla YA tiene su
+        // propio spinner — forzar acá un salto a /splash y de vuelta era un
+        // parpadeo innecesario que no debería verse fuera del arranque.
         if (authState is AuthInitial || authState is AuthLoading) {
-          return location == splash ? null : splash;
+          return (location == splash || location == login) ? null : splash;
         }
 
         // Sesión resuelta: navegar al destino. Se decide ACÁ (no en
