@@ -52,8 +52,14 @@ function makeService(prismaOverrides: Record<string, any> = {}) {
     sendToUser: jest.fn().mockResolvedValue(undefined),
     sendSilentRefresh: jest.fn().mockResolvedValue(undefined),
   };
-  const service = new ThreadsService(prisma as any, notifications as any);
-  return { service, prisma, notifications };
+  // getSignedUrls firma en el mismo orden en que se le pasan los paths —
+  // el fake solo le agrega un prefijo, así el test puede verificar que el
+  // avatar que llega al cliente NO es el path crudo de la base.
+  const storage = {
+    getSignedUrls: jest.fn((paths: string[]) => Promise.resolve(paths.map((p) => `https://signed.example/${p}`))),
+  };
+  const service = new ThreadsService(prisma as any, notifications as any, storage as any);
+  return { service, prisma, notifications, storage };
 }
 
 describe('ThreadsService.openThread — aislamiento y permisos', () => {
@@ -962,6 +968,53 @@ describe('ThreadsService.getContacts — a quién se le puede escribir', () => {
       },
     ]);
     expect(prisma.user.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('firma el avatar del hijo (path del bucket, no una URL servible) para el padre', async () => {
+    const { service, storage } = makeService({
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+      $queryRaw: jest.fn().mockResolvedValue([
+        {
+          teacher_id: TEACHER.id,
+          teacher_first_name: 'Ana',
+          teacher_last_name: 'Pérez',
+          teacher_avatar: null,
+          teacher_last_active: null,
+          student_id: STUDENT,
+          student_first_name: 'Juan',
+          student_last_name: 'Quispe',
+          student_avatar: 'avatars/100/foto.jpg',
+        },
+      ]),
+    });
+
+    const contacts = await service.getContacts(SCHOOL_A, PARENT);
+    const teacher = contacts.find((c) => c.role === 'teacher')!;
+    expect(teacher.students[0].avatar).toBe('https://signed.example/avatars/100/foto.jpg');
+    expect(storage.getSignedUrls).toHaveBeenCalledWith(['avatars/100/foto.jpg'], 3600, 'avatars');
+  });
+
+  it('firma el avatar del hijo para el docente', async () => {
+    const { service, storage } = makeService({
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+      $queryRaw: jest.fn().mockResolvedValue([
+        {
+          parent_id: PARENT.id,
+          parent_first_name: 'Rosa',
+          parent_last_name: 'Quispe',
+          parent_avatar: null,
+          parent_last_active: null,
+          student_id: STUDENT,
+          student_first_name: 'Juan',
+          student_last_name: 'Quispe',
+          student_avatar: 'avatars/100/foto.jpg',
+        },
+      ]),
+    });
+
+    const contacts = await service.getContacts(SCHOOL_A, TEACHER);
+    expect(contacts[0].students[0].avatar).toBe('https://signed.example/avatars/100/foto.jpg');
+    expect(storage.getSignedUrls).toHaveBeenCalledWith(['avatars/100/foto.jpg'], 3600, 'avatars');
   });
 });
 
