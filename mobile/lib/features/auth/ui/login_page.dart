@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:go_router/go_router.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
-import '../../../core/router/app_router.dart';
 import '../../../core/widgets/kolexa_logo.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../../core/services/google_sign_in_service.dart';
@@ -137,18 +135,11 @@ class _LoginPageState extends State<LoginPage> {
       backgroundColor: _kBg,
       body: BlocConsumer<AuthBloc, AuthState>(
         listener: (context, state) {
-          if (state is AuthAuthenticated) {
-            // Dato real, no un flag local: si algún hijo todavía no tiene
-            // foto, se muestra la pantalla (aunque ya haya subido la de
-            // otro hijo, o desde otro dispositivo). Si todos ya tienen,
-            // no hay nada que hacer ahí — directo al home.
-            final missingPhoto = state.user.children.any((c) => c.avatarUrl == null);
-            if (missingPhoto) {
-              context.go(AppRouter.hijosEncontrados, extra: state.user);
-            } else {
-              context.go(AppRouter.home);
-            }
-          }
+          // La navegación a home/hijosEncontrados la decide el redirect
+          // central de AppRouter (se re-evalúa solo con refreshListenable
+          // en cuanto AuthBloc emite AuthAuthenticated) — un context.go()
+          // manual acá competía en carrera contra ese redirect y siempre
+          // perdía, así que "encontramos a tus hijos" nunca se veía.
           if (state is AuthError) {
             // state.message llega tal cual del backend (ver AuthBloc._onGoogleLogin
             // y AuthError). Para los códigos de invitación se mapea por
