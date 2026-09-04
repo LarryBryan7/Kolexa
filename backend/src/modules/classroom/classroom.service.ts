@@ -250,6 +250,8 @@ export class ClassroomService {
     // un Map<normalizedName, id>. Solo se guardan nombres con EXACTAMENTE 1 match,
     // preservando la semántica original (matches.length === 1).
     // student.findMany se ejecuta DESPUÉS de userRole porque necesita schoolId.
+    const normalize = (s: string) =>
+      s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
     const studentsByNormalizedName = new Map<string, bigint>();
     if (schoolId) {
       const allStudents = await this.prisma.student.findMany({
@@ -258,8 +260,6 @@ export class ClassroomService {
       });
       const t2b = Date.now();
       console.log(`[TEACHER-SYNC] student.findMany = ${t2b - t2} ms`);
-      const normalize = (s: string) =>
-        s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
       const nameCount = new Map<string, number>();
       const nameToId = new Map<string, bigint>();
       for (const st of allStudents) {
@@ -432,6 +432,81 @@ export class ClassroomService {
     console.log(`[TEACHER-COURSES] end total=${t6 - c0} ms`);
     console.log(`[TEACHER-SYNC] courses-db = ${t6 - t5} ms`);
 
+    // ── Alta automática de alumnos nuevos en Classroom (P3) ──
+    // Antes: si un alumno del roster de Google no matcheaba por nombre con ningún
+    // Student existente, studentId quedaba null PARA SIEMPRE — el alumno nunca
+    // aparecía para el padre/director aunque fuera real. Google Classroom debe
+    // ALIMENTAR el modelo institucional, no reemplazarlo (mismo principio que
+    // gc_course_links para cursos/horario): acá se crea el Student que falta, y
+    // si el curso de Google ya está enlazado a un aula (gc_course_links →
+    // classroom_courses), también se matricula ahí.
+    // Solo paga el costo extra la sincronización que tiene alumnos sin match: si
+    // todos matchean por nombre, unmatchedByGoogleId queda vacío y no se dispara
+    // ninguna query adicional.
+    const unmatchedByGoogleId = new Map<string, string>();
+    for (const { fetchedStudents } of perCourse) {
+      for (const s of fetchedStudents) {
+        const fullName: string = s.profile?.name?.fullName ?? '–';
+        const normalized = normalize(fullName);
+        if (!studentsByNormalizedName.has(normalized) && !unmatchedByGoogleId.has(s.userId)) {
+          unmatchedByGoogleId.set(s.userId, fullName);
+        }
+      }
+    }
+    const newlyCreatedIdByGoogleId = new Map<string, bigint>();
+    if (schoolId && unmatchedByGoogleId.size > 0) {
+      const entries = [...unmatchedByGoogleId.entries()];
+      // Google entrega un solo campo con el nombre completo; se parte en nombre /
+      // apellidos por la primera palabra, igual que en classroom-import.service.ts.
+      // Imperfecto, pero el admin puede corregirlo después en la ficha del alumno.
+      const studentValueRows = entries.map(([, fullName]) => {
+        const parts = fullName.trim().split(/\s+/);
+        const firstName = parts[0];
+        const lastName = parts.slice(1).join(' ') || null;
+        return Prisma.sql`(${schoolId}::bigint, ${firstName}::varchar, ${lastName}::varchar, true)`;
+      });
+      const created = await this.prisma.$queryRaw<{ id: bigint }[]>`
+        INSERT INTO "students" (school_id, first_name, last_name, is_active)
+        VALUES ${Prisma.join(studentValueRows)}
+        RETURNING id
+      `;
+      entries.forEach(([googleId], i) => newlyCreatedIdByGoogleId.set(googleId, created[i].id));
+      console.log(`[TEACHER-SYNC] alumnos-nuevos creados=${created.length}`);
+
+      // Si el curso de Google ya está enlazado a un aula institucional, matricular
+      // de una vez: sin esto el padre nunca vería el horario del alumno.
+      const courseLinks = await this.prisma.gcCourseLink.findMany({
+        where: { schoolId },
+        select: { googleCourseId: true, classroomCourse: { select: { classroomId: true } } },
+      });
+      const classroomIdByGoogleCourseId = new Map<string, bigint>();
+      for (const link of courseLinks) {
+        classroomIdByGoogleCourseId.set(link.googleCourseId, link.classroomCourse.classroomId);
+      }
+      const academicYear = new Date().getFullYear();
+      const enrollmentPairs = new Map<string, { studentId: bigint; classroomId: bigint }>();
+      for (const { course, fetchedStudents } of perCourse) {
+        const classroomId = classroomIdByGoogleCourseId.get(course.id!);
+        if (!classroomId) continue;
+        for (const s of fetchedStudents) {
+          const newId = newlyCreatedIdByGoogleId.get(s.userId);
+          if (!newId) continue;
+          enrollmentPairs.set(`${newId}:${classroomId}`, { studentId: newId, classroomId });
+        }
+      }
+      if (enrollmentPairs.size > 0) {
+        const enrollmentValueRows = [...enrollmentPairs.values()].map(
+          (p) => Prisma.sql`(${p.studentId}::bigint, ${p.classroomId}::bigint, ${academicYear}::smallint, true)`,
+        );
+        await this.prisma.$executeRaw`
+          INSERT INTO "student_enrollments" (student_id, classroom_id, academic_year, is_active)
+          VALUES ${Prisma.join(enrollmentValueRows)}
+          ON CONFLICT (student_id, classroom_id, academic_year) DO UPDATE SET is_active = true
+        `;
+        console.log(`[TEACHER-SYNC] matriculas-nuevas=${enrollmentPairs.size}`);
+      }
+    }
+
     // 2 + 3. Roster y Submissions en paralelo (Promise.all).
     //    Tras courses-db ya están disponibles todos los courseId locales (courseIdByGoogle).
     //    Roster y Submissions son INDEPENDIENTES entre sí (cada uno solo lee courseIdByGoogle
@@ -472,7 +547,8 @@ export class ClassroomService {
           for (const s of fetchedStudents) {
             const fullName: string = s.profile?.name?.fullName ?? '–';
             const normalized = fullName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-            const matchedId = studentsByNormalizedName.get(normalized) ?? null;
+            const matchedId =
+              studentsByNormalizedName.get(normalized) ?? newlyCreatedIdByGoogleId.get(s.userId) ?? null;
             allNewStudents.push({
               courseId,
               googleId: s.userId,
