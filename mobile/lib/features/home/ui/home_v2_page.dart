@@ -395,10 +395,9 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     setState(() => _connectingClassroom = true);
     try {
       final url = await ClassroomRepository(context.read<ApiClient>()).getAuthUrl(studentId);
-      // inAppBrowserView (Custom Tabs): igual que en home_docente_page, evita
-      // que Android trate el navegador como una app aparte y mate el proceso
-      // de Kolexa mientras el padre está en el consentimiento de Google.
-      final launched = await launchUrl(Uri.parse(url), mode: LaunchMode.inAppBrowserView);
+      // externalApplication: ver comentario en home_docente_page._connectClassroom
+      // — inAppBrowserView dejaba en blanco el consentimiento de Google en Pixel.
+      final launched = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
       if (!launched && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No se pudo abrir el navegador')),
