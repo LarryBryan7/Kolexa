@@ -12,7 +12,14 @@
         android:label="kolexa"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:networkSecurityConfig="@xml/network_security_config">
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:allowBackup="false">
+        <!-- allowBackup=false: TokenStore guarda access/refresh token en
+             SharedPreferences plano (a propósito, ver token_store.dart —
+             flutter_secure_storage tarda 20-30s en Exynos gama baja). Sin
+             esto, el backup automático de Android a Google Drive restauraba
+             la sesión completa al reinstalar la app, como si nunca se
+             hubiera desinstalado — desinstalar debe dejar sesión limpia. -->
         <!-- Impeller/Vulkan causa stutters de compilación de shaders en GPUs Mali (gama baja).
              Skia (backend clásico) es más estable en A10, J-series y M-series de Samsung. -->
         <meta-data
