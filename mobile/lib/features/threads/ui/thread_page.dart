@@ -678,16 +678,26 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
           firstMessageBody: body,
         );
         if (!mounted || !_guard.isAccountCurrent(epoch)) return;
-        setState(() {
-          _threadId = threadId;
-          _pendingMessages = _pendingMessages.where((m) => m.id != tempId).toList();
-        });
+        setState(() => _threadId = threadId);
         // NewMessagePage ya se cerró (y avisó a InboxPage) antes de que
         // este hilo existiera, así que la bandeja no tiene forma de
         // enterarse de la conversación nueva por esa vía — se refresca acá
         // en cuanto se sabe que el hilo quedó creado de verdad.
         InboxSyncService.instance.refresh();
+        // El pendiente (con relojito) se deja tal cual mientras carga: antes
+        // se sacaba apenas se creaba el hilo, y _load() de abajo mostraba un
+        // spinner de pantalla completa mientras tanto (con _messages
+        // todavía null) — el usuario veía "desaparecer" su mensaje recién
+        // mandado. Recién se saca cuando _load() ya trajo el mensaje real
+        // confirmado; si _load() falla, se deja el relojito en vez de
+        // perderlo (el mensaje sí se mandó — solo falló el refresh).
         await _load(forceScroll: true);
+        if (!mounted || !_guard.isAccountCurrent(epoch)) return;
+        if (_messages != null) {
+          setState(() {
+            _pendingMessages = _pendingMessages.where((m) => m.id != tempId).toList();
+          });
+        }
         return;
       }
 
@@ -862,7 +872,11 @@ class _ThreadPageState extends State<ThreadPage> with WidgetsBindingObserver {
             ),
             Expanded(
               child: Builder(builder: (context) {
-                if (_messages == null) {
+                // Con un pendiente en vuelo (relojito) siempre hay algo que
+                // mostrar — nunca tapa la conversación con un spinner de
+                // pantalla completa, ni con el hilo recién creado (ver
+                // _sendBody) ni con un reintento sobre un hilo ya abierto.
+                if (_messages == null && _pendingMessages.isEmpty) {
                   if (_loadingFirstTime) {
                     return const Center(child: CircularProgressIndicator(color: _kAccent));
                   }
