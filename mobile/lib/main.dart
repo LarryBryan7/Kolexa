@@ -206,23 +206,34 @@ class _KolexaAppState extends State<KolexaApp> {
     }
     InboxSyncService.instance.requestChatsTab();
 
+    // Si es el PRIMER mensaje del hilo (nunca estuvo en la bandeja), el
+    // cache local todavía no lo tiene — por eso el header salía genérico
+    // ("Conversación", sin foto/rol) para conversaciones recién creadas.
+    // refresh() trae la bandeja fresca de la red antes de leer el cache
+    // (ya traga sus propios errores — sin red, sigue con lo que había).
+    // Independiente de getMessages() de abajo, así que van en paralelo.
+    await Future.wait([
+      InboxSyncService.instance.refresh(),
+      () async {
+        try {
+          final page = await ThreadsRepository(_apiClient).getMessages(threadId);
+          ThreadPage.primeCache(threadId, page);
+          ThreadsLocalStore.saveThread(threadId, page).catchError((e, st) {
+            debugPrint('[main] saveThread (notificación) falló: $e\n$st');
+          });
+        } catch (e, st) {
+          debugPrint('[main] getMessages (notificación) falló: $e\n$st');
+          // ThreadPage igual los pide sola al montarse — solo se pierde el
+          // "ya está todo ahí al instante" para esta apertura puntual.
+        }
+      }(),
+    ]);
     List<ThreadSummary> threads = const [];
     try {
       threads = await ThreadsLocalStore.loadInbox();
     } catch (_) {
       // Sin dato local todavía — se abre igual con datos genéricos en vez
       // de no navegar a ningún lado.
-    }
-    try {
-      final page = await ThreadsRepository(_apiClient).getMessages(threadId);
-      ThreadPage.primeCache(threadId, page);
-      ThreadsLocalStore.saveThread(threadId, page).catchError((e, st) {
-        debugPrint('[main] saveThread (notificación) falló: $e\n$st');
-      });
-    } catch (e, st) {
-      debugPrint('[main] getMessages (notificación) falló: $e\n$st');
-      // ThreadPage igual los pide sola al montarse — solo se pierde el
-      // "ya está todo ahí al instante" para esta apertura puntual.
     }
     ThreadSummary? match;
     for (final t in threads) {
