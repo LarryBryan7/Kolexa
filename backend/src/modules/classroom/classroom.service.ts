@@ -471,10 +471,14 @@ export class ClassroomService {
         const parts = fullName.trim().split(/\s+/);
         const firstName = parts[0];
         const lastName = parts.slice(1).join(' ') || null;
-        return Prisma.sql`(${schoolId}::bigint, ${firstName}::varchar, ${lastName}::varchar, true)`;
+        return Prisma.sql`(${schoolId}::bigint, ${firstName}::varchar, ${lastName}::varchar, true, NOW())`;
       });
+      // updated_at es @updatedAt en el schema (NOT NULL, sin default en la BD):
+      // Prisma solo lo autocompleta cuando se pasa por el Client, no por SQL
+      // crudo — sin esto, el INSERT fallaba con 23502 (not_null_violation) y
+      // el alumno nunca se creaba.
       const created = await this.prisma.$queryRaw<{ id: bigint }[]>`
-        INSERT INTO "students" (school_id, first_name, last_name, is_active)
+        INSERT INTO "students" (school_id, first_name, last_name, is_active, updated_at)
         VALUES ${Prisma.join(studentValueRows)}
         RETURNING id
       `;
