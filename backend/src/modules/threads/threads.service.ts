@@ -38,7 +38,16 @@ export interface ThreadSummary {
   unread: boolean;
   unreadCount: number;
   muted: boolean;
-  otherParticipant: { id: string; name: string; avatar: string | null; online: boolean } | null;
+  otherParticipant: {
+    id: string;
+    name: string;
+    avatar: string | null;
+    online: boolean;
+    // 'teacher' | 'parent' | 'school_admin' — mismo valor que Contact.role,
+    // para que ThreadPage pueda mostrar "Docente"/"Apoderado"/"Dirección
+    // del colegio" arriba del nombre en el header.
+    role: string;
+  } | null;
   lastMessage: { body: string; senderId: string; sentAt: Date; delivered: boolean } | null;
 }
 
@@ -56,9 +65,12 @@ export interface Contact {
   name: string;
   avatar: string | null;
   role: string;
+  // Punto verde/gris — mismo criterio que ThreadSummary.otherParticipant
+  // (ver isOnline más abajo).
+  online: boolean;
   // Alumno(s) que hacen válida esta conversación. Vacío para hilos con el
   // director, donde no hace falta indicar uno.
-  students: { id: string; name: string }[];
+  students: { id: string; name: string; avatar: string | null }[];
 }
 
 const ADMIN_ROLES = ['school_admin', 'director'];
@@ -72,6 +84,17 @@ const isAdmin = (roles: string[]) => roles.some((r) => ADMIN_ROLES.includes(r));
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
 const isOnline = (lastActiveAt: Date | null) =>
   !!lastActiveAt && Date.now() - lastActiveAt.getTime() < ONLINE_THRESHOLD_MS;
+
+// Mismo criterio que toAdminContacts/getContacts: un usuario puede tener
+// varios roles en el colegio (ej. admin y docente a la vez), pero acá solo
+// hace falta UNO para mostrar en el header de ThreadPage — se prioriza
+// admin/director (habla "como" dirección del colegio) sobre docente sobre
+// padre.
+const primaryRole = (roles: string[]): string => {
+  if (isAdmin(roles)) return 'school_admin';
+  if (roles.includes('teacher')) return 'teacher';
+  return 'parent';
+};
 
 @Injectable()
 export class ThreadsService {
@@ -101,7 +124,14 @@ export class ThreadsService {
               select: {
                 lastReadAt: true,
                 user: {
-                  select: { id: true, firstName: true, lastName: true, avatar: true, lastActiveAt: true },
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    avatar: true,
+                    lastActiveAt: true,
+                    userRoles: { where: { schoolId }, select: { role: { select: { name: true } } } },
+                  },
                 },
               },
             },
@@ -174,6 +204,7 @@ export class ThreadsService {
                 name: `${other.firstName} ${other.lastName ?? ''}`.trim(),
                 avatar: other.avatar,
                 online: isOnline(other.lastActiveAt),
+                role: primaryRole(other.userRoles.map((r) => r.role.name)),
               }
             : null,
           lastMessage: last
@@ -214,13 +245,14 @@ export class ThreadsService {
         deletedAt: null,
         userRoles: { some: { schoolId, role: { name: { in: ADMIN_ROLES } } } },
       },
-      select: { id: true, firstName: true, lastName: true, avatar: true },
+      select: { id: true, firstName: true, lastName: true, avatar: true, lastActiveAt: true },
     });
     const toAdminContacts = (admins: Awaited<typeof adminsPromise>): Contact[] =>
       admins.map((a) => ({
         userId: a.id.toString(),
         name: `${a.firstName} ${a.lastName ?? ''}`.trim(),
         avatar: a.avatar,
+        online: isOnline(a.lastActiveAt),
         role: 'school_admin',
         students: [],
       }));
@@ -237,7 +269,7 @@ export class ThreadsService {
             deletedAt: null,
             userRoles: { some: { schoolId, role: { name: 'teacher' } } },
           },
-          select: { id: true, firstName: true, lastName: true, avatar: true },
+          select: { id: true, firstName: true, lastName: true, avatar: true, lastActiveAt: true },
         }),
       ]);
       const adminContacts = toAdminContacts(admins);
@@ -245,6 +277,7 @@ export class ThreadsService {
         userId: t.id.toString(),
         name: `${t.firstName} ${t.lastName ?? ''}`.trim(),
         avatar: t.avatar,
+        online: isOnline(t.lastActiveAt),
         role: 'teacher',
         students: [],
       }));
@@ -264,9 +297,11 @@ export class ThreadsService {
             teacher_first_name: string;
             teacher_last_name: string | null;
             teacher_avatar: string | null;
+            teacher_last_active: Date | null;
             student_id: bigint;
             student_first_name: string;
             student_last_name: string | null;
+            student_avatar: string | null;
           }[]
         >`
           SELECT DISTINCT
@@ -274,9 +309,11 @@ export class ThreadsService {
             tu.first_name AS teacher_first_name,
             tu.last_name AS teacher_last_name,
             tu.avatar_url AS teacher_avatar,
+            tu.last_active_at AS teacher_last_active,
             s.id AS student_id,
             s.first_name AS student_first_name,
-            s.last_name AS student_last_name
+            s.last_name AS student_last_name,
+            s.avatar_url AS student_avatar
           FROM user_students us
           JOIN students s ON s.id = us.student_id
           JOIN student_enrollments se ON se.student_id = us.student_id AND se.is_active = true
@@ -289,7 +326,12 @@ export class ThreadsService {
 
       const byTeacher = new Map<
         string,
-        { name: string; avatar: string | null; students: Map<string, string> }
+        {
+          name: string;
+          avatar: string | null;
+          online: boolean;
+          students: Map<string, { name: string; avatar: string | null }>;
+        }
       >();
       for (const row of rows) {
         const key = row.teacher_id.toString();
@@ -297,21 +339,27 @@ export class ThreadsService {
           byTeacher.set(key, {
             name: `${row.teacher_first_name} ${row.teacher_last_name ?? ''}`.trim(),
             avatar: row.teacher_avatar,
+            online: isOnline(row.teacher_last_active),
             students: new Map(),
           });
         }
-        byTeacher.get(key)!.students.set(
-          row.student_id.toString(),
-          `${row.student_first_name} ${row.student_last_name ?? ''}`.trim(),
-        );
+        byTeacher.get(key)!.students.set(row.student_id.toString(), {
+          name: `${row.student_first_name} ${row.student_last_name ?? ''}`.trim(),
+          avatar: row.student_avatar,
+        });
       }
 
       const teacherContacts: Contact[] = [...byTeacher.entries()].map(([id, v]) => ({
         userId: id,
         name: v.name,
         avatar: v.avatar,
+        online: v.online,
         role: 'teacher',
-        students: [...v.students.entries()].map(([sid, name]) => ({ id: sid, name })),
+        students: [...v.students.entries()].map(([sid, s]) => ({
+          id: sid,
+          name: s.name,
+          avatar: s.avatar,
+        })),
       }));
       return [...teacherContacts, ...adminContacts];
     }
@@ -328,9 +376,11 @@ export class ThreadsService {
             parent_first_name: string;
             parent_last_name: string | null;
             parent_avatar: string | null;
+            parent_last_active: Date | null;
             student_id: bigint;
             student_first_name: string;
             student_last_name: string | null;
+            student_avatar: string | null;
           }[]
         >`
           SELECT DISTINCT
@@ -338,9 +388,11 @@ export class ThreadsService {
             u.first_name AS parent_first_name,
             u.last_name AS parent_last_name,
             u.avatar_url AS parent_avatar,
+            u.last_active_at AS parent_last_active,
             s.id AS student_id,
             s.first_name AS student_first_name,
-            s.last_name AS student_last_name
+            s.last_name AS student_last_name,
+            s.avatar_url AS student_avatar
           FROM classroom_courses cc
           JOIN student_enrollments se ON se.classroom_id = cc.classroom_id AND se.is_active = true
           JOIN students s ON s.id = se.student_id
@@ -353,7 +405,12 @@ export class ThreadsService {
 
       const byParent = new Map<
         string,
-        { name: string; avatar: string | null; students: Map<string, string> }
+        {
+          name: string;
+          avatar: string | null;
+          online: boolean;
+          students: Map<string, { name: string; avatar: string | null }>;
+        }
       >();
       for (const row of rows) {
         const key = row.parent_id.toString();
@@ -361,21 +418,27 @@ export class ThreadsService {
           byParent.set(key, {
             name: `${row.parent_first_name} ${row.parent_last_name ?? ''}`.trim(),
             avatar: row.parent_avatar,
+            online: isOnline(row.parent_last_active),
             students: new Map(),
           });
         }
-        byParent.get(key)!.students.set(
-          row.student_id.toString(),
-          `${row.student_first_name} ${row.student_last_name ?? ''}`.trim(),
-        );
+        byParent.get(key)!.students.set(row.student_id.toString(), {
+          name: `${row.student_first_name} ${row.student_last_name ?? ''}`.trim(),
+          avatar: row.student_avatar,
+        });
       }
 
       const parentContacts: Contact[] = [...byParent.entries()].map(([id, v]) => ({
         userId: id,
         name: v.name,
         avatar: v.avatar,
+        online: v.online,
         role: 'parent',
-        students: [...v.students.entries()].map(([sid, name]) => ({ id: sid, name })),
+        students: [...v.students.entries()].map(([sid, s]) => ({
+          id: sid,
+          name: s.name,
+          avatar: s.avatar,
+        })),
       }));
       return [...parentContacts, ...adminContacts];
     }
