@@ -106,10 +106,9 @@ class ClassroomBloc extends Bloc<ClassroomEvent, ClassroomState> {
   Future<void> _onConnect(ConnectClassroom event, Emitter<ClassroomState> emit) async {
     try {
       final url = await _repo.getAuthUrl(event.studentId);
-      // inAppBrowserView (Custom Tabs): mismo motivo que en las otras 2
-      // pantallas que conectan Classroom — evita el reinicio en frío al volver
-      // del consentimiento de Google.
-      await launchUrl(Uri.parse(url), mode: LaunchMode.inAppBrowserView);
+      // externalApplication: ver comentario en home_docente_page._connectClassroom
+      // — inAppBrowserView dejaba en blanco el consentimiento de Google en Pixel.
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
     } catch (e) {
       emit(ClassroomError('No se pudo abrir el navegador'));
     }
