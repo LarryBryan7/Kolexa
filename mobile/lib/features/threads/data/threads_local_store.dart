@@ -162,6 +162,10 @@ class ThreadsLocalStore {
         unread: row.unread,
         unreadCount: row.unreadCount,
         muted: row.muted,
+        // `role` no tiene columna propia en el esquema Drift (agregarla
+        // implicaría una migración de esquema para archivos ya existentes
+        // en el dispositivo) — queda null hasta que el próximo refresh de
+        // red lo traiga, mismo criterio que `online` en Contacts.
         otherParticipant: row.otherId != null
             ? ThreadOtherParticipant(
                 id: row.otherId!,
@@ -210,10 +214,17 @@ class ThreadsLocalStore {
         name: c.name,
         avatar: Value(c.avatar),
         role: c.role,
-        studentsJson: jsonEncode(c.students.map((s) => {'id': s.id, 'name': s.name}).toList()),
+        studentsJson: jsonEncode(
+          c.students.map((s) => {'id': s.id, 'name': s.name, 'avatar': s.avatar}).toList(),
+        ),
         sortIndex: index,
       );
 
+  // `online` no se persiste en disco a propósito: es una señal "ahora
+  // mismo" (ver isOnline en el backend, ventana de 3 minutos) — guardar el
+  // último valor conocido lo dejaría mintiendo "en línea" horas después de
+  // cerrada la app. Se muestra `false` hasta que el próximo `_refresh()`
+  // (red) lo confirme, mismo patrón "disco primero, red confirma después".
   static Contact _contactFromRow(ContactRow row) => Contact(
         userId: row.userId,
         name: row.name,
@@ -221,7 +232,10 @@ class ThreadsLocalStore {
         role: row.role,
         students: (jsonDecode(row.studentsJson) as List<dynamic>)
             .map((s) => ThreadStudentRef(
-                id: (s as Map<String, dynamic>)['id'] as String, name: s['name'] as String))
+                  id: (s as Map<String, dynamic>)['id'] as String,
+                  name: s['name'] as String,
+                  avatar: s['avatar'] as String?,
+                ))
             .toList(),
       );
 }

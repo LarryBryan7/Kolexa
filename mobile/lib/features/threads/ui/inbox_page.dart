@@ -19,6 +19,7 @@ import '../../../core/services/push_notifications_service.dart';
 import '../../../core/utils/cached_avatar.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
+import '../data/inbox_sync_service.dart';
 import '../data/staleness_guard.dart';
 import '../data/threads_local_store.dart';
 import '../data/threads_repository.dart';
@@ -106,6 +107,14 @@ class InboxPage extends StatefulWidget {
     _InboxPageState._guard.invalidateAccount();
   }
 
+  // Actualiza el cache en memoria desde afuera de esta pantalla — lo usa
+  // InboxSyncService cuando un push/resume llega mientras la pestaña Chats
+  // no está montada, para que al volver a entrar ya se vea lo último
+  // (ver inbox_sync_service.dart).
+  static void primeCache(List<ThreadSummary> threads) {
+    _InboxPageState._cachedThreads = threads;
+  }
+
   @visibleForTesting
   static List<ThreadSummary>? get debugCachedThreads => _InboxPageState._cachedThreads;
 
@@ -154,9 +163,22 @@ class _InboxPageState extends State<InboxPage> with WidgetsBindingObserver {
     _refresh(showErrorIfEmpty: true);
     PushNotificationsService.instance.addDataRefreshListener(_handleDataRefresh);
     WidgetsBinding.instance.addObserver(this);
+    // Cubre el caso que ni el push ni el resume alcanzan: esta misma
+    // InboxPage sigue montada debajo de otra pantalla en la misma pestaña
+    // (ej. se creó una conversación nueva desde NewMessagePage y se
+    // empujó ThreadPage encima) — al volver con un simple pop() nunca
+    // vuelve a correr initState(), así que nunca releería el cache que
+    // InboxSyncService ya dejó fresco por su cuenta sin esta señal.
+    InboxSyncService.instance.version.addListener(_onBackgroundSync);
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
     });
+  }
+
+  void _onBackgroundSync() {
+    if (!mounted) return;
+    final fresh = _cachedThreads;
+    if (fresh != null) setState(() => _threads = fresh);
   }
 
   // Red de seguridad si el push no llegó mientras la app estaba en
@@ -173,6 +195,7 @@ class _InboxPageState extends State<InboxPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     PushNotificationsService.instance.removeDataRefreshListener(_handleDataRefresh);
+    InboxSyncService.instance.version.removeListener(_onBackgroundSync);
     _searchController.dispose();
     super.dispose();
   }
@@ -260,6 +283,7 @@ class _InboxPageState extends State<InboxPage> with WidgetsBindingObserver {
           title: t.otherParticipant?.name ?? 'Conversación',
           avatarUrl: t.otherParticipant?.avatar,
           online: t.otherParticipant?.online ?? false,
+          otherRole: t.otherParticipant?.role,
           studentId: t.studentId,
           studentName: t.studentName,
         ),

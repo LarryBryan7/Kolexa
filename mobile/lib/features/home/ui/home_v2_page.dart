@@ -19,6 +19,7 @@ import 'pendientes_page.dart';
 import '../../../core/utils/lima_date.dart';
 import '../../../core/utils/cached_avatar.dart';
 import 'home_docente_page.dart' show PerfilTab;
+import '../../threads/data/inbox_sync_service.dart';
 import '../../threads/ui/inbox_page.dart';
 
 // ── Paleta extraída de Figma ──────────────────────────────
@@ -39,8 +40,9 @@ const _kSvgCalendarWeek =
     '<path d="M11.75 0.75V4.08333M4.41667 0.75V4.08333M0.75 7.41667H15.4167M3.5 9.91667H3.51192M6.25918 9.91667H6.26376M9.00918 9.91667H9.01376M11.7638 9.91667H11.7683M9.01376 12.4167H9.01835M3.50918 12.4167H3.51376M6.25918 12.4167H6.26376M0.75 4.08333C0.75 3.64131 0.943154 3.21738 1.28697 2.90482C1.63079 2.59226 2.0971 2.41667 2.58333 2.41667H13.5833C14.0696 2.41667 14.5359 2.59226 14.8797 2.90482C15.2235 3.21738 15.4167 3.64131 15.4167 4.08333V14.0833C15.4167 14.5254 15.2235 14.9493 14.8797 15.2618C14.5359 15.5744 14.0696 15.75 13.5833 15.75H2.58333C2.0971 15.75 1.63079 15.5744 1.28697 15.2618C0.943154 14.9493 0.75 14.5254 0.75 14.0833V4.08333Z" stroke="#96650C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
     '</svg>';
 const _kNavInact = Color(0xFF707070);
-const _kNavPillBg = Color(0xFFEFE8F7);
-const _kNavActive = Color(0xFF391499);
+const _kNavPillBg = Color(0xFFF3E6FF);
+const _kNavActive = Color(0xFF972FFF);
+const _kNavBadge = Color(0xFF9F6CF3);
 
 const _kSvgNavHouse =
     '<svg width="15" height="16" viewBox="0 0 15 16" fill="none" xmlns="http://www.w3.org/2000/svg">'
@@ -175,6 +177,13 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    // Pedido de "abrir en la pestaña Chats" (ver main.dart, al tocar una
+    // notificación de mensaje) — se consume acá si este Home se está
+    // montando recién ahora; si ya estaba vivo, lo agarra el listener de
+    // abajo en cambio. Ver InboxSyncService.requestChatsTab.
+    final pendingTab = InboxSyncService.instance.consumeChatsTabRequest();
+    if (pendingTab != null) _navIndex = pendingTab;
+    InboxSyncService.instance.chatsTabRequests.addListener(_onChatsTabRequested);
     _homeStartMs = DateTime.now().millisecondsSinceEpoch;
     WidgetsBinding.instance.addObserver(this);
     // Cargamos (rápido, la instancia ya está cacheada por auth) el estado de
@@ -228,10 +237,16 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     });
   }
 
+  void _onChatsTabRequested() {
+    final pendingTab = InboxSyncService.instance.consumeChatsTabRequest();
+    if (pendingTab != null && mounted) setState(() => _navIndex = pendingTab);
+  }
+
   @override
   void dispose() {
     _verifyTimeout?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    InboxSyncService.instance.chatsTabRequests.removeListener(_onChatsTabRequested);
     super.dispose();
   }
 
@@ -2307,7 +2322,7 @@ class _BottomNav extends StatelessWidget {
   static const _items = [
     (_kSvgNavHouseOutline, _kSvgNavHouse, 'Inicio'),
     (_kSvgNavChat, _kSvgNavChatFill, 'Chats'),
-    (_kSvgNavCalendar, _kSvgNavCalendarFill, 'Calendario'),
+    (_kSvgNavCalendar, _kSvgNavCalendarFill, 'Pendientes'),
     (_kSvgNavUser, _kSvgNavUserFill, 'Perfil'),
   ];
 
@@ -2340,6 +2355,7 @@ class _BottomNav extends StatelessWidget {
                         children: [
                           Stack(
                             alignment: Alignment.center,
+                            clipBehavior: Clip.none,
                             children: [
                               // El pill "crece" desde el centro al activarse
                               // (efecto resorte), en vez de aparecer de golpe.
@@ -2372,6 +2388,36 @@ class _BottomNav extends StatelessWidget {
                                   ),
                                 ),
                               ),
+                              if (item.$3 == 'Chats')
+                                Positioned(
+                                  top: -2,
+                                  right: -10,
+                                  child: ValueListenableBuilder<int>(
+                                    valueListenable: InboxSyncService.instance.unreadCount,
+                                    builder: (context, count, _) {
+                                      if (count <= 0) return const SizedBox.shrink();
+                                      return Container(
+                                        constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                                        decoration: const BoxDecoration(
+                                          color: _kNavBadge,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Center(
+                                          child: Text(
+                                            count > 9 ? '9+' : '$count',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.w700,
+                                              height: 1,
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
                             ],
                           ),
                           const SizedBox(height: 4),

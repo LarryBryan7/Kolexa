@@ -12,6 +12,7 @@ import '../data/director_repository.dart';
 import 'director/salones_page.dart';
 import 'director/personal_page.dart';
 import 'director/pensiones_page.dart';
+import '../../threads/data/inbox_sync_service.dart';
 import '../../threads/ui/inbox_page.dart';
 import '../../../core/theme/app_sizes.dart';
 
@@ -24,8 +25,9 @@ const _kGray      = Color(0xFF666666);
 const _kGrayLt    = Color(0xFF999999);
 const _kNavInact  = Color(0xFF707070);
 const _kChevron   = Color(0xFF8E8E93);
-const _kNavPillBg = Color(0xFFEFE8F7);
-const _kNavActive = Color(0xFF391499);
+const _kNavPillBg = Color(0xFFF3E6FF);
+const _kNavActive = Color(0xFF972FFF);
+const _kNavBadge  = Color(0xFF9F6CF3);
 
 const _kYellowBg     = Color(0xFFFAEED3);
 const _kYellowCircle = Color(0xFFF6E0AB);
@@ -88,7 +90,25 @@ class _HomeDirectorPageState extends State<HomeDirectorPage> {
   @override
   void initState() {
     super.initState();
+    // Pedido de "abrir en la pestaña Chats" (ver main.dart, al tocar una
+    // notificación de mensaje) — se consume acá si este Home se está
+    // montando recién ahora; si ya estaba vivo, lo agarra el listener de
+    // abajo en cambio. Ver InboxSyncService.requestChatsTab.
+    final pendingTab = InboxSyncService.instance.consumeChatsTabRequest();
+    if (pendingTab != null) _navIndex = pendingTab;
+    InboxSyncService.instance.chatsTabRequests.addListener(_onChatsTabRequested);
     _summaryFuture = DirectorRepository(context.read<ApiClient>()).getSchoolSummary();
+  }
+
+  void _onChatsTabRequested() {
+    final pendingTab = InboxSyncService.instance.consumeChatsTabRequest();
+    if (pendingTab != null && mounted) setState(() => _navIndex = pendingTab);
+  }
+
+  @override
+  void dispose() {
+    InboxSyncService.instance.chatsTabRequests.removeListener(_onChatsTabRequested);
+    super.dispose();
   }
 
   Future<void> _onRefresh() async {
@@ -564,7 +584,7 @@ class _BottomNav extends StatelessWidget {
   static const _items = [
     (_kSvgNavHouseOutline, _kSvgNavHouseFill, 'Inicio'),
     (_kSvgNavChatOutline, _kSvgNavChatFill, 'Chats'),
-    (_kSvgNavCalendarOutline, _kSvgNavCalendarFill, 'Calendario'),
+    (_kSvgNavCalendarOutline, _kSvgNavCalendarFill, 'Pendientes'),
     (_kSvgNavUserOutline, _kSvgNavUserFill, 'Perfil'),
   ];
 
@@ -598,6 +618,7 @@ class _BottomNav extends StatelessWidget {
                         children: [
                           Stack(
                             alignment: Alignment.center,
+                            clipBehavior: Clip.none,
                             children: [
                               // El pill "crece" desde el centro al activarse
                               // (efecto resorte), en vez de aparecer de golpe.
@@ -628,6 +649,36 @@ class _BottomNav extends StatelessWidget {
                                       ColorFilter.mode(color, BlendMode.srcIn),
                                 ),
                               ),
+                              if (label == 'Chats')
+                                Positioned(
+                                  top: -2,
+                                  right: -10,
+                                  child: ValueListenableBuilder<int>(
+                                    valueListenable: InboxSyncService.instance.unreadCount,
+                                    builder: (context, count, _) {
+                                      if (count <= 0) return const SizedBox.shrink();
+                                      return Container(
+                                        constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                                        decoration: const BoxDecoration(
+                                          color: _kNavBadge,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Center(
+                                          child: Text(
+                                            count > 9 ? '9+' : '$count',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.w700,
+                                              height: 1,
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
                             ],
                           ),
                           const SizedBox(height: 4),
