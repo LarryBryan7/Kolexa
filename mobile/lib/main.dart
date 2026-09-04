@@ -25,6 +25,9 @@ import 'features/auth/data/datasources/auth_remote_datasource.dart';
 import 'features/auth/data/repositories/auth_repository.dart';
 import 'features/classroom/bloc/classroom_bloc.dart';
 import 'features/classroom/data/repository/classroom_repository.dart';
+import 'features/threads/data/inbox_sync_service.dart';
+import 'features/threads/data/threads_local_store.dart';
+import 'features/threads/data/threads_repository.dart';
 import 'features/threads/ui/inbox_page.dart';
 import 'features/threads/ui/new_message_page.dart';
 import 'features/threads/ui/thread_page.dart';
@@ -113,7 +116,11 @@ class _KolexaAppState extends State<KolexaApp> {
   Future<void> _handleAuthStateChangeForLocalData(AuthState state) async {
     if (state is AuthAuthenticated) {
       await AppDatabase.instance.openForUser(state.user.id);
+      // Arranca ya (no espera a que el usuario entre a la pestaña Chats) —
+      // ver inbox_sync_service.dart.
+      InboxSyncService.instance.start(_apiClient);
     } else if (state is AuthUnauthenticated) {
+      InboxSyncService.instance.stop();
       InboxPage.clearCache();
       ThreadPage.clearCache();
       NewMessagePage.clearCache();
@@ -138,6 +145,16 @@ class _KolexaAppState extends State<KolexaApp> {
     final screen = data['screen'];
     final studentName = data['studentName'];
 
+    // Notificación de un mensaje: se abre aparte (ver
+    // _openThreadFromNotification) — necesita esperar a que la sesión
+    // esté resuelta antes de tocar el router, cosa que un simple `go()`
+    // acá no puede garantizar.
+    if (screen == 'thread') {
+      final threadId = data['threadId'] as String?;
+      if (threadId != null) _openThreadFromNotification(threadId);
+      return;
+    }
+
     // Las notificaciones de asistencia/fotos apuntan a 'novedades',
     // que es el tab principal del home. Navegamos al home y, si venimos
     // de una notificación de un alumno concreto, lo pasamos como parámetro
@@ -150,6 +167,82 @@ class _KolexaAppState extends State<KolexaApp> {
 
     // Fallback: cualquier otra notificación lleva al home.
     AppRouter.router.go(AppRouter.home);
+  }
+
+  // Abre el hilo de una notificación de mensaje. Diseñado para que:
+  //   1. No se vea el salto splash→home→chat: si la sesión todavía se
+  //      está resolviendo (cold start recién abierto desde la
+  //      notificación), esperamos ACÁ a que termine en vez de pedirle al
+  //      router que navegue a home de una — eso era lo que antes lo
+  //      rebotaba a /splash (el redirect de AppRouter no deja pasar a
+  //      home hasta que AuthBloc resuelve) y perdía en el camino el pedido
+  //      de pestaña, la causa real tanto del flash como del "back" que no
+  //      caía en la bandeja.
+  //   2. "Atrás" desde la conversación caiga siempre en la bandeja: se
+  //      descarta cualquier pantalla que hubiera quedada empujada encima
+  //      (popUntil) y se fuerza la pestaña Chats del home vía
+  //      InboxSyncService.requestChatsTab — no por query param de ruta,
+  //      que es precisamente lo que se perdía en el punto 1.
+  //   3. El mensaje ya esté ahí al abrir, no recién al montarse
+  //      ThreadPage: se precargan los mensajes del hilo (mismo motivo que
+  //      InboxSyncService._prefetchThread, que solo corre con la app en
+  //      primer plano — con la app en segundo plano/cerrada, que es el
+  //      caso real de "tocar una notificación", el handler de background
+  //      de Firebase no ejecuta nada de Dart, ver _firebaseBackgroundHandler).
+  Future<void> _openThreadFromNotification(String threadId) async {
+    var authState = _authBloc.state;
+    if (authState is! AuthAuthenticated) {
+      authState = await _authBloc.stream.firstWhere(
+        (s) => s is AuthAuthenticated || s is AuthUnauthenticated || s is AuthError,
+      );
+    }
+    if (authState is! AuthAuthenticated) return; // no había sesión — nada que abrir
+
+    final nav = AppRouter.router.routerDelegate.navigatorKey.currentState;
+    if (nav == null) return;
+    nav.popUntil((route) => route.isFirst);
+    if (AppRouter.router.routerDelegate.currentConfiguration.uri.path != AppRouter.home) {
+      AppRouter.router.go(AppRouter.home);
+    }
+    InboxSyncService.instance.requestChatsTab();
+
+    List<ThreadSummary> threads = const [];
+    try {
+      threads = await ThreadsLocalStore.loadInbox();
+    } catch (_) {
+      // Sin dato local todavía — se abre igual con datos genéricos en vez
+      // de no navegar a ningún lado.
+    }
+    try {
+      final page = await ThreadsRepository(_apiClient).getMessages(threadId);
+      ThreadPage.primeCache(threadId, page);
+      ThreadsLocalStore.saveThread(threadId, page).catchError((e, st) {
+        debugPrint('[main] saveThread (notificación) falló: $e\n$st');
+      });
+    } catch (e, st) {
+      debugPrint('[main] getMessages (notificación) falló: $e\n$st');
+      // ThreadPage igual los pide sola al montarse — solo se pierde el
+      // "ya está todo ahí al instante" para esta apertura puntual.
+    }
+    ThreadSummary? match;
+    for (final t in threads) {
+      if (t.id == threadId) {
+        match = t;
+        break;
+      }
+    }
+    if (!mounted) return;
+    nav.push(MaterialPageRoute(
+      builder: (_) => ThreadPage(
+        threadId: threadId,
+        title: match?.otherParticipant?.name ?? 'Conversación',
+        avatarUrl: match?.otherParticipant?.avatar,
+        online: match?.otherParticipant?.online ?? false,
+        otherRole: match?.otherParticipant?.role,
+        studentId: match?.studentId,
+        studentName: match?.studentName,
+      ),
+    ));
   }
 
   @override

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart' show Color;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -144,13 +145,17 @@ class PushNotificationsService {
       // el token vigente, y sin este call nunca se resincroniza con el
       // backend hasta el próximo login manual.
       final token = _fcmToken;
+      debugPrint('[PUSH] getToken() → ${token == null ? "null" : "ok (${token.length} chars)"}');
       if (token != null) onTokenRefresh?.call(token);
-    } catch (_) {
+    } catch (e, st) {
       // Sin Google Play Services (emuladores sin GMS) — ignorar
+      debugPrint('[PUSH] getToken() falló: $e\n$st');
     }
   }
 
   void _handleForegroundMessage(RemoteMessage message) {
+    debugPrint('[PUSH] mensaje en foreground recibido: data=${message.data} '
+        'notification=${message.notification != null ? "sí" : "no"}');
     // Flag de refresh: refresca la pantalla en tiempo real (ej. home padre)
     // SIN interrumpir el flujo. Después seguimos y mostramos la notificación
     // visible normalmente (igual que WhatsApp: notifica Y actualiza).
