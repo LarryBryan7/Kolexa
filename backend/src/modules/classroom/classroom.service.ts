@@ -1446,7 +1446,7 @@ export class ClassroomService {
     // transacción (1 conexión). Total 2 conexiones en vez de 4. La consulta
     // del avatar es independiente (solo necesita studentId) — corre en
     // paralelo con la de la sesión.
-    const [sessionRows, studentForAvatar] = await Promise.all([
+    const [sessionRows, studentForAvatar, googleToken] = await Promise.all([
       this.prisma.$queryRaw<SessionRow[]>`
         SELECT s.id, s.teacher_id, s.created_at, s.photo_urls,
                (SELECT r.status FROM gc_attendance_records r WHERE r.session_id = s.id ORDER BY r.id LIMIT 1) AS status
@@ -1456,11 +1456,21 @@ export class ClassroomService {
         LIMIT 1
       `,
       this.prisma.student.findUnique({ where: { id: studentId }, select: { avatar: true } }),
+      this.prisma.googleToken.findUnique({ where: { studentId }, select: { id: true } }),
     ]);
 
     // Las 3 queries restantes se mantienen en UNA transacción (1 conexión)
     // para no cambiar el comportamiento con el pooler. Firmar el avatar no
     // toca la base (es una llamada a la API de Storage) — corre en paralelo.
+    // syncStudent también corre en paralelo, igual que en getOverview(): la
+    // respuesta de ESTA llamada sale con lo que ya había en la BD (el sync
+    // fresco recién se ve en la siguiente), pero antes getParentHome() nunca
+    // sincronizaba en absoluto — "pendientes" del home del padre se quedaba
+    // vacío para siempre salvo que el padre entrara a la pantalla dedicada
+    // de Classroom (la única que sí llamaba a syncStudent). Solo se dispara
+    // si hay token (si no, syncStudent() lanza ForbiddenException) y se
+    // ignora cualquier error (un token inválido no debe tumbar el home —
+    // sigue mostrando lo que ya había en caché).
     const [[blockRows, tokenRows, upcomingRows], avatarUrls] = await Promise.all([
       this.prisma.$transaction(async (tx) => {
       // Fuente principal: el horario del AULA en la que está matriculado el
@@ -1531,6 +1541,7 @@ export class ClassroomService {
       studentForAvatar?.avatar
         ? this.storage.getSignedUrls([studentForAvatar.avatar], 3600, 'avatars')
         : Promise.resolve([]),
+      googleToken ? this.syncStudent(studentId).catch(() => undefined) : Promise.resolve(undefined),
     ]);
     const avatarUrl = avatarUrls[0] ?? null;
 

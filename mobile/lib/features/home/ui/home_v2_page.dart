@@ -471,7 +471,29 @@ class _HomeV2PageState extends State<HomeV2Page> with WidgetsBindingObserver {
     // El usuario SÍ autorizó: sincronizamos ANTES de mostrar la card "Esta
     // semana" para que el conteo de pendientes ya incluya los datos recién
     // traídos de Google.
-    try { await repo.sync(studentId); } catch (_) {}
+    try {
+      await repo.sync(studentId);
+    } on GoogleTokenExpiredException {
+      // El token que se acaba de intercambiar ya quedó inválido (puede pasar
+      // si el usuario revocó el acceso a mitad del flujo, o el intercambio
+      // completó contra un backend/callback que ya no es el vigente). Antes
+      // esto se tragaba en silencio y el padre se quedaba viendo "sin
+      // pendientes" para siempre sin ninguna pista — se trata igual que
+      // "nunca se conectó", mostrando de nuevo la tarjeta para reconectar.
+      if (!mounted) return;
+      setState(() {
+        _connectingClassroom = false;
+        _waitingClassroomConfirm = false;
+        _showManualVerify = false;
+        _classroomStatusFuture = Future.value(false);
+        _classroomConnected = false;
+      });
+      _rememberConnected(studentId, false);
+      return;
+    } catch (_) {
+      // Otros errores (red, etc.): no tumbar una conexión ya verificada por
+      // un fallo transitorio — se sigue igual que antes.
+    }
     if (!mounted) return;
     // Mantenemos "Estamos cargando tus tareas..." visible (waitingConfirm=true)
     // mientras cargamos los datos combinados del home. Así el card "Esta

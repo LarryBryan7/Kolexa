@@ -18,6 +18,20 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'interceptors/auth_interceptor.dart';
 
+// Tipo propio (no un Exception genérico) para que un catch pueda distinguir
+// "el token de Google Classroom quedó inválido" de cualquier otro error sin
+// volver a caer en clasificar por substring del mensaje (mismo hallazgo H-01
+// que ya evitamos en _handleError). Antes de esto, código como
+// _verifyClassroomConnection() en home_v2_page.dart solo podía tragarse
+// CUALQUIER excepción del sync (catch (_) {}) porque no tenía forma de
+// distinguir este caso puntual del resto.
+class GoogleTokenExpiredException implements Exception {
+  const GoogleTokenExpiredException();
+  @override
+  String toString() =>
+      'La conexión con Google Classroom expiró. Vuelve a conectarla desde el colegio.';
+}
+
 class ApiClient {
   // Release → producción. Debug → IP local WiFi (sin cable USB).
   // Actualizar _devHost si cambia la IP del Mac en la red.
@@ -194,9 +208,7 @@ class ApiClient {
             return Exception('Sesión expirada. Por favor inicia sesión de nuevo.');
           }
           if (code == 'GOOGLE_TOKEN_EXPIRED') {
-            return Exception(
-              'La conexión con Google Classroom expiró. Vuelve a conectarla desde el colegio.',
-            );
+            return const GoogleTokenExpiredException();
           }
           return Exception(messageStr);
         }
