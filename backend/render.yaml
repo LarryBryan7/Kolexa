@@ -4,7 +4,11 @@ services:
     runtime: node
     plan: free
     rootDir: backend
-    buildCommand: npm install && npm run build
+    # --include=dev: con NODE_ENV=production seteado (ver envVars abajo), npm
+    # install salta devDependencies por defecto — y @nestjs/cli (el binario
+    # `nest` que usa `nest build`) vive ahí. Sin esto el build falla con
+    # "nest: not found".
+    buildCommand: npm install --include=dev && npm run build
     startCommand: npm run start
     envVars:
       - key: NODE_ENV
