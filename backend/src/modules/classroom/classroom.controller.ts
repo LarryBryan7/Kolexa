@@ -30,6 +30,16 @@ function googleTokenExpiredException(): UnauthorizedException {
   });
 }
 
+// e?.response?.data?.error de un error de la API de Google a veces es un
+// string ('invalid_grant') pero otras veces es un objeto ({code, message,
+// status}) — sin esto, `msg.includes(...)` explotaba con "msg.includes is
+// not a function" y tapaba el error real de Google detrás de un 500 propio.
+function extractGoogleErrorMessage(e: any): string {
+  const errData = e?.response?.data?.error;
+  if (typeof errData === 'string') return errData;
+  return errData?.message ?? e?.message ?? '';
+}
+
 @Controller('classroom')
 export class ClassroomController {
   constructor(private readonly classroomService: ClassroomService) {}
@@ -123,7 +133,7 @@ export class ClassroomController {
     try {
       return await this.classroomService.syncTeacher(BigInt(req.user.sub));
     } catch (e: any) {
-      const msg: string = e?.response?.data?.error ?? e?.message ?? '';
+      const msg: string = extractGoogleErrorMessage(e);
       if (msg.includes('invalid_grant') || msg.includes('invalid_token')) {
         throw googleTokenExpiredException();
       }
@@ -238,7 +248,7 @@ export class ClassroomController {
     try {
       return await this.classroomService.syncStudent(studentId, force === 'true');
     } catch (e: any) {
-      const msg: string = e?.response?.data?.error ?? e?.message ?? '';
+      const msg: string = extractGoogleErrorMessage(e);
       if (msg.includes('invalid_grant') || msg.includes('invalid_token')) {
         throw googleTokenExpiredException();
       }
@@ -273,7 +283,7 @@ export class ClassroomController {
     try {
       return await this.classroomService.getOverview(studentId);
     } catch (e: any) {
-      const msg: string = e?.response?.data?.error ?? e?.message ?? '';
+      const msg: string = extractGoogleErrorMessage(e);
       if (msg.includes('invalid_grant') || msg.includes('invalid_token')) {
         throw googleTokenExpiredException();
       }
