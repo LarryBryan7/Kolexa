@@ -987,6 +987,7 @@ export class ClassroomService {
     // entre syncs, el caché sigue activo y el sync es rápido (~2s) en vez de
     // volver a hacer el sync completo (~26s).
     const cacheHit = !force && !!lastSyncedAt && diffMs < 15 * 60 * 1000;
+    console.log(`[STUDENT-SYNC] start studentId=${studentId} cacheHit=${cacheHit} cachedCourses=${cachedCourses} cachedCourseworks=${cachedCourseworks}`);
     if (cacheHit) {
       return { courses: cachedCourses, courseworks: cachedCourseworks, cacheHit: true };
     }
@@ -1001,6 +1002,7 @@ export class ClassroomService {
       courseStates: ['ACTIVE'],
     });
     const courses = coursesData.courses ?? [];
+    console.log(`[STUDENT-SYNC] courses-list studentId=${studentId} count=${courses.length}`);
 
     // 2. Lanzar TODAS las peticiones a Google en paralelo (courseWork + submissions
     // de cada curso) para reducir el tiempo de ~30s a ~4-6s.
@@ -1159,6 +1161,7 @@ export class ClassroomService {
       });
     }
 
+    console.log(`[STUDENT-SYNC] done studentId=${studentId} courses=${perCourse.length} courseworks=${totalCourseworks} submissions=${allSubs.length}`);
     return { courses: perCourse.length, courseworks: totalCourseworks, cacheHit: false };
   }
 
@@ -1458,6 +1461,7 @@ export class ClassroomService {
       this.prisma.student.findUnique({ where: { id: studentId }, select: { avatar: true } }),
       this.prisma.googleToken.findUnique({ where: { studentId }, select: { id: true } }),
     ]);
+    console.log(`[PARENT-HOME] studentId=${studentId} googleTokenConnected=${!!googleToken}`);
 
     // Las 3 queries restantes se mantienen en UNA transacción (1 conexión)
     // para no cambiar el comportamiento con el pooler. Firmar el avatar no
