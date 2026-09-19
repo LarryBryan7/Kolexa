@@ -111,3 +111,29 @@ describe('ClassroomService.getParentHome — dispara syncStudent si hay Classroo
     await expect(service.getParentHome(3n)).resolves.toHaveProperty('todaySummary');
   });
 });
+
+describe('ClassroomService.getParentHome — sesión de asistencia acotada al alumno (BL-1)', () => {
+  it('la query de sesión filtra por el alumno (gc_course_students.student_id), no por la sesión más reciente global', async () => {
+    const { service, prisma } = makeService({ studentAvatar: null });
+
+    await service.getParentHome(3n);
+
+    const [strings, ...values] = prisma.$queryRaw.mock.calls[0];
+    const sql = (strings as string[]).join('?');
+    expect(sql).toContain('gc_course_students');
+    expect(sql).toContain('cs.student_id =');
+    expect(values).toContain(3n);
+  });
+
+  it('devuelve el estado y la hora del registro del alumno tal como lo entrega la query', async () => {
+    const { service, prisma } = makeService({ studentAvatar: null });
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { id: 1n, teacher_id: 9n, created_at: new Date('2026-09-19T13:05:00Z'), photo_urls: [], status: 'late' },
+    ]);
+
+    const result = await service.getParentHome(3n);
+
+    expect(result.todaySummary.arrivalStatus).toBe('late');
+    expect(result.todaySummary.arrivalTime).toBe('8:05 am');
+  });
+});

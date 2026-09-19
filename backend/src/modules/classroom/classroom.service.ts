@@ -1450,11 +1450,17 @@ export class ClassroomService {
     // del avatar es independiente (solo necesita studentId) — corre en
     // paralelo con la de la sesión.
     const [sessionRows, studentForAvatar, googleToken] = await Promise.all([
+      // La sesión y el estado se ubican por el registro de ESTE alumno (vía
+      // gc_course_students.student_id), igual que getParentTodaySummary
+      // (hallazgo BL-1). Sin este filtro se tomaba la sesión más reciente de
+      // toda la base y el estado del primer registro de esa sesión.
       this.prisma.$queryRaw<SessionRow[]>`
-        SELECT s.id, s.teacher_id, s.created_at, s.photo_urls,
-               (SELECT r.status FROM gc_attendance_records r WHERE r.session_id = s.id ORDER BY r.id LIMIT 1) AS status
-        FROM gc_attendance_sessions s
-        WHERE s.date = ${todayDate}
+        SELECT s.id, s.teacher_id, s.created_at, s.photo_urls, r.status
+        FROM gc_attendance_records r
+        JOIN gc_course_students cs ON cs.id = r.student_id
+        JOIN gc_attendance_sessions s ON s.id = r.session_id
+        WHERE cs.student_id = ${studentId}
+          AND s.date = ${todayDate}
         ORDER BY s.created_at DESC
         LIMIT 1
       `,
